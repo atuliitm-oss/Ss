@@ -12,6 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { db, handleFirestoreError, OperationType } from '@/src/lib/firebase';
 import { collection, query, where, getDocs, addDoc, serverTimestamp } from 'firebase/firestore';
 import { identifyTeacher } from '@/src/services/geminiService';
+import { compressImage } from '@/src/lib/imageUtils';
 import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'motion/react';
 import { format } from 'date-fns';
@@ -115,6 +116,9 @@ export function AttendanceKiosk() {
         // Success!
         const teacher = teachers.find(t => t.id === matchResult.matchedId);
         
+        // Compress for storage
+        const compressedPhoto = await compressImage(imageSrc, 400, 400, 0.6); // smaller for logs
+
         // Check for duplicate attendance today (Local Time)
         const today = new Date().toLocaleDateString('en-CA');
         const existingQuery = query(
@@ -144,7 +148,7 @@ export function AttendanceKiosk() {
           teacherName: matchResult.name || teacher?.name || 'Unknown',
           date: today,
           timestamp: serverTimestamp(),
-          verificationPhoto: imageSrc,
+          verificationPhoto: compressedPhoto,
           status: 'present',
           confidence: matchResult.confidence
         });
@@ -244,44 +248,33 @@ export function AttendanceKiosk() {
                 />
             </div>
 
-            <div className="mt-6 flex flex-col items-center gap-2">
-              <div className={`px-6 py-2 rounded-full text-xs backdrop-blur-md font-bold flex items-center gap-2 ${quotaPaused ? 'bg-orange-600 text-white shadow-lg' : 'bg-black/50 text-white'}`}>
-                {quotaPaused ? (
-                  <><XCircle size={14} className="animate-pulse" /> QUOTA LIMIT HIT (RESUMING IN {quotaCountdown}s)</>
-                ) : !isAutoScanEnabled ? (
-                  <><XCircle size={14} className="text-gray-400" /> AUTO-SCAN DISABLED</>
-                ) : isAutoScanning ? (
-                  <><Loader2 size={14} className="animate-spin text-natural-accent" /> AI ANALYZING...</>
-                ) : (
-                  loading ? 'LOADING...' : 'AUTO-SCAN ACTIVE'
-                )}
-              </div>
-              <p className="text-natural-primary/60 text-[10px] font-black uppercase tracking-widest text-center max-w-[250px]">
-                {quotaPaused 
-                  ? "Too many requests to Gemini. Wait for the cooldown or scan manually."
-                  : isAutoScanEnabled 
-                    ? "Position face or Teacher's Card inside the frame"
-                    : "Tap 'SCAN NOW' to verify face"
-                }
-              </p>
-            </div>
-
-            <div className="absolute top-4 left-4 flex flex-col gap-2">
+            <div className="absolute top-4 left-4 z-20 flex flex-col gap-2">
               <Button 
                 onClick={() => setIsAutoScanEnabled(!isAutoScanEnabled)}
                 variant="secondary"
-                title={isAutoScanEnabled ? "Turn Off Auto-Scan" : "Turn On Auto-Scan"}
                 className={`rounded-full px-4 h-10 backdrop-blur-md border-2 transition-all flex items-center gap-2 ${
                   isAutoScanEnabled 
                   ? 'bg-natural-success/20 border-natural-success/30 text-natural-success' 
                   : 'bg-white/20 border-white/20 text-white'
                 }`}
               >
-                <div className={`w-3 h-3 rounded-full ${isAutoScanEnabled ? 'bg-natural-success animate-pulse' : 'bg-gray-400'}`} />
-                <span className="text-[10px] font-black tracking-widest uppercase">
+                <div className={`w-2.5 h-2.5 rounded-full ${isAutoScanEnabled ? 'bg-natural-success animate-pulse' : 'bg-gray-400'}`} />
+                <span className="text-[9px] font-black tracking-widest uppercase">
                   Auto: {isAutoScanEnabled ? 'ON' : 'OFF'}
                 </span>
               </Button>
+
+              <div className={`px-4 py-1.5 rounded-full text-[10px] backdrop-blur-md font-black tracking-wider flex items-center gap-2 border whitespace-nowrap shadow-sm ${quotaPaused ? 'bg-orange-600 text-white border-orange-400' : 'bg-black/40 text-white border-white/10'}`}>
+                {quotaPaused ? (
+                  <><XCircle size={12} className="animate-pulse" /> QUOTA ({quotaCountdown}s)</>
+                ) : !isAutoScanEnabled ? (
+                  <><XCircle size={12} className="text-gray-400" /> DISABLED</>
+                ) : isAutoScanning ? (
+                  <><Loader2 size={12} className="animate-spin text-natural-accent" /> ANALYZING...</>
+                ) : (
+                  loading ? 'LOADING...' : <><div className="w-1.5 h-1.5 rounded-full bg-natural-success animate-pulse" /> SCANNING</>
+                )}
+              </div>
             </div>
 
             <div className="absolute top-4 right-4 flex flex-col gap-2">
@@ -304,11 +297,11 @@ export function AttendanceKiosk() {
               </Button>
             </div>
 
-            <div className="absolute bottom-6 left-0 right-0 px-6">
+            <div className="absolute bottom-6 left-0 right-0 px-6 flex flex-col items-center gap-4">
               <Button 
                  onClick={() => handleCapture(false)} 
                  disabled={loading || verifying}
-                 className="w-full h-16 rounded-[28px] bg-gradient-to-r from-natural-accent to-orange-500 hover:from-natural-accent/90 hover:to-orange-600 text-white font-black text-xl shadow-[0_15px_30px_rgba(244,63,94,0.3)] transition-all active:scale-[0.98]"
+                 className="w-full h-16 rounded-[28px] bg-gradient-to-r from-natural-accent to-orange-500 hover:from-natural-accent/90 hover:to-orange-600 text-white font-black text-xl shadow-[0_15px_30px_rgba(244,63,94,0.3)] transition-all active:scale-[0.98] border-2 border-white/30"
               >
                 {verifying ? (
                   <><Loader2 size={28} className="mr-3 animate-spin" /> VERIFYING...</>
@@ -316,6 +309,15 @@ export function AttendanceKiosk() {
                   <><Camera size={28} className="mr-3" /> SCAN NOW</>
                 )}
               </Button>
+
+              <p className="text-white/80 text-[10px] font-black uppercase tracking-[0.25em] text-center max-w-[280px] drop-shadow-md">
+                {quotaPaused 
+                  ? "Too many requests. Wait for cooldown."
+                  : isAutoScanEnabled 
+                    ? "Position face inside frame"
+                    : "Tap above to verify identity"
+                }
+              </p>
             </div>
           </motion.div>
         )}

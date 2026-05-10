@@ -15,6 +15,7 @@ import { collection, addDoc, serverTimestamp, getDocs, query, orderBy, deleteDoc
 import { toast } from 'sonner';
 import { format } from 'date-fns';
 import Papa from 'papaparse';
+import { compressImage } from '@/src/lib/imageUtils';
 
 interface TeacherEntry {
   id: string;
@@ -42,6 +43,7 @@ export function TeacherRegistration() {
   const [teachers, setTeachers] = useState<any[]>([]);
   const [fetching, setFetching] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [editingTeacher, setEditingTeacher] = useState<any | null>(null);
   const [editName, setEditName] = useState('');
   const [editDept, setEditDept] = useState('');
@@ -128,14 +130,16 @@ export function TeacherRegistration() {
   const capture = useCallback(() => {
     const imageSrc = webcamRef.current?.getScreenshot();
     if (imageSrc) {
-      if (activeTab === 'single') {
-        setPhoto(imageSrc);
-      } else if (selectedBulkIndex !== null) {
-        const newEntries = [...bulkEntries];
-        newEntries[selectedBulkIndex].photo = imageSrc;
-        setBulkEntries(newEntries);
-      }
-      setIsCapturing(false);
+      compressImage(imageSrc).then(compressed => {
+        if (activeTab === 'single') {
+          setPhoto(compressed);
+        } else if (selectedBulkIndex !== null) {
+          const newEntries = [...bulkEntries];
+          newEntries[selectedBulkIndex].photo = compressed;
+          setBulkEntries(newEntries);
+        }
+        setIsCapturing(false);
+      });
     }
   }, [webcamRef, activeTab, selectedBulkIndex, bulkEntries]);
 
@@ -467,11 +471,12 @@ export function TeacherRegistration() {
                           const file = e.target.files?.[0];
                           if (file) {
                             const reader = new FileReader();
-                            reader.onloadend = () => {
-                              if (activeTab === 'single') setPhoto(reader.result as string);
+                            reader.onloadend = async () => {
+                              const compressed = await compressImage(reader.result as string);
+                              if (activeTab === 'single') setPhoto(compressed);
                               else {
                                 const newEntries = [...bulkEntries];
-                                newEntries[selectedBulkIndex!].photo = reader.result as string;
+                                newEntries[selectedBulkIndex!].photo = compressed;
                                 setBulkEntries(newEntries);
                               }
                             };
@@ -551,6 +556,12 @@ export function TeacherRegistration() {
                           videoConstraints={{ facingMode }}
                           className="w-full h-full object-cover"
                           mirrored={facingMode === 'user'}
+                          onUserMedia={() => {}}
+                          onUserMediaError={() => {}}
+                          imageSmoothing={true}
+                          forceScreenshotSourceSize={false}
+                          disablePictureInPicture={true}
+                          screenshotQuality={0.9}
                         />
                       ) : (
                         <img src={editPhoto || ''} className="w-full h-full object-cover" />
@@ -578,8 +589,10 @@ export function TeacherRegistration() {
                           onClick={() => {
                             const imageSrc = webcamRef.current?.getScreenshot();
                             if (imageSrc) {
-                              setEditPhoto(imageSrc);
-                              setIsCapturingEdit(false);
+                              compressImage(imageSrc).then(compressed => {
+                                setEditPhoto(compressed);
+                                setIsCapturingEdit(false);
+                              });
                             }
                           }}
                           className="bg-natural-success hover:bg-natural-success/90 rounded-xl"
@@ -624,8 +637,9 @@ export function TeacherRegistration() {
                                 const file = e.target.files?.[0];
                                 if (file) {
                                   const reader = new FileReader();
-                                  reader.onloadend = () => {
-                                    setEditPhoto(reader.result as string);
+                                  reader.onloadend = async () => {
+                                    const compressed = await compressImage(reader.result as string);
+                                    setEditPhoto(compressed);
                                   };
                                   reader.readAsDataURL(file);
                                 }
@@ -663,13 +677,51 @@ export function TeacherRegistration() {
                   </div>
                 </div>
               </CardContent>
-              <CardFooter className="p-6 flex gap-3">
-                <Button variant="outline" className="flex-1 h-12 rounded-xl font-bold" onClick={() => setEditingTeacher(null)}>
-                  Cancel
-                </Button>
-                <Button className="flex-1 h-12 rounded-xl font-bold bg-natural-primary hover:bg-natural-primary/90" onClick={handleUpdate} disabled={updating}>
-                  {updating ? <Loader2 size={18} className="animate-spin mr-2" /> : <Save size={18} className="mr-2" />}
-                  Save Changes
+              <CardFooter className="p-6 flex flex-col gap-3">
+                <div className="flex gap-3 w-full">
+                  <Button variant="outline" className="flex-1 h-12 rounded-xl font-bold" onClick={() => setEditingTeacher(null)}>
+                    Cancel
+                  </Button>
+                  <Button className="flex-1 h-12 rounded-xl font-bold bg-natural-primary hover:bg-natural-primary/90" onClick={handleUpdate} disabled={updating}>
+                    {updating ? <Loader2 size={18} className="animate-spin mr-2" /> : <Save size={18} className="mr-2" />}
+                    Save Changes
+                  </Button>
+                </div>
+                <Button 
+                  variant={confirmDeleteId === editingTeacher?.dbId ? "destructive" : "ghost"} 
+                  className={`w-full h-10 font-bold rounded-xl gap-2 transition-all ${confirmDeleteId === editingTeacher?.dbId ? "bg-red-600 animate-pulse" : "text-red-500 hover:text-red-600 hover:bg-red-50"}`}
+                  disabled={updating || deletingId === editingTeacher?.dbId}
+                  onClick={async () => {
+                    if (!editingTeacher?.dbId) return;
+                    
+                    if (confirmDeleteId !== editingTeacher.dbId) {
+                      setConfirmDeleteId(editingTeacher.dbId);
+                      setTimeout(() => setConfirmDeleteId(null), 3000); // Reset after 3s
+                      return;
+                    }
+
+                    setDeletingId(editingTeacher.dbId);
+                    const teacherName = editingTeacher.name;
+                    try {
+                      await deleteDoc(doc(db, "teachers", editingTeacher.dbId));
+                      setTeachers(prev => prev.filter(t => t.dbId !== editingTeacher.dbId));
+                      toast.success(`${teacherName} deleted`);
+                      setEditingTeacher(null);
+                      setConfirmDeleteId(null);
+                    } catch (error) {
+                      handleFirestoreError(error, OperationType.DELETE, "teachers");
+                    } finally {
+                      setDeletingId(null);
+                    }
+                  }}
+                >
+                  {deletingId === editingTeacher?.dbId ? (
+                    <Loader2 size={16} className="animate-spin" />
+                  ) : confirmDeleteId === editingTeacher?.dbId ? (
+                    <>Confirm Delete?</>
+                  ) : (
+                    <><Trash2 size={16} /> Delete Profile</>
+                  )}
                 </Button>
               </CardFooter>
             </Card>
@@ -712,35 +764,42 @@ export function TeacherRegistration() {
                   <Edit2 size={18} className="text-indigo-600" />
                 </Button>
                 <Button 
-                  variant="destructive" 
-                  size="icon"
-                  className="h-11 w-11 rounded-2xl flex-shrink-0 shadow-lg transition-all active:scale-95 bg-red-500 hover:bg-red-600 border-2 border-white"
+                  variant={confirmDeleteId === teacher.dbId ? "destructive" : "destructive"} 
+                  size={confirmDeleteId === teacher.dbId ? "default" : "icon"}
+                  className={`h-11 rounded-2xl flex-shrink-0 shadow-lg transition-all active:scale-95 bg-red-500 hover:bg-red-600 border-2 border-white ${confirmDeleteId === teacher.dbId ? "px-4 w-auto" : "w-11"}`}
                   disabled={deletingId === teacher.dbId}
                   onClick={async (e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  if (!teacher.dbId) return;
-                  
-                  if (window.confirm(`Permanently remove ${teacher.name} from directory?`)) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    if (!teacher.dbId) return;
+                    
+                    if (confirmDeleteId !== teacher.dbId) {
+                      setConfirmDeleteId(teacher.dbId);
+                      setTimeout(() => setConfirmDeleteId(null), 3000);
+                      return;
+                    }
+
                     setDeletingId(teacher.dbId);
                     try {
                       await deleteDoc(doc(db, "teachers", teacher.dbId));
                       setTeachers(prev => prev.filter(t => t.dbId !== teacher.dbId));
                       toast.success(`${teacher.name} deleted`);
+                      setConfirmDeleteId(null);
                     } catch (error) {
                       handleFirestoreError(error, OperationType.DELETE, "teachers");
                     } finally {
                       setDeletingId(null);
                     }
-                  }
-                }}
-              >
-                {deletingId === teacher.dbId ? (
-                  <Loader2 size={18} className="animate-spin" />
-                ) : (
-                  <Trash2 size={18} />
-                )}
-              </Button>
+                  }}
+                >
+                  {deletingId === teacher.dbId ? (
+                    <Loader2 size={18} className="animate-spin" />
+                  ) : confirmDeleteId === teacher.dbId ? (
+                    <span className="text-[10px] font-bold">CONFIRM?</span>
+                  ) : (
+                    <Trash2 size={18} />
+                  )}
+                </Button>
             </div>
           </div>
           ))
