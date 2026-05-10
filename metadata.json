@@ -1,0 +1,11 @@
+{
+  "name": "Happy Days School Attendance",
+  "description": "Mobile-optimized facial recognition attendance system for Happy Days School.",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "majorCapabilities": [
+    "Facial Verification",
+    "Real-time Attendance Logging"
+  ]
+}

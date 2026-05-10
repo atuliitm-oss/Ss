@@ -1,0 +1,21 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Teachers collection rules
+    match /teachers/{teacherId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Attendance records rules
+    match /attendance/{recordId} {
+      allow read: if true;
+      allow create: if true;
+    }
+
+    // Default deny for everything else
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

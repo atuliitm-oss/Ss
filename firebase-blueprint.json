@@ -1,0 +1,43 @@
+{
+  "entities": {
+    "Teacher": {
+      "title": "Teacher",
+      "description": "Details of a registered teacher in the system.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique identifier for the teacher (e.g. employee ID)" },
+        "name": { "type": "string", "description": "Full name of the teacher" },
+        "photoUrl": { "type": "string", "description": "Base64 or URL of the reference photo for face matching" },
+        "department": { "type": "string", "description": "Teacher's department" },
+        "status": { "type": "string", "enum": ["active", "inactive"], "description": "Current status of the teacher" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "When the teacher was registered" }
+      },
+      "required": ["id", "name", "photoUrl"]
+    },
+    "AttendanceRecord": {
+      "title": "Attendance Record",
+      "description": "Daily attendance record for a teacher verified via face matching.",
+      "type": "object",
+      "properties": {
+        "teacherId": { "type": "string", "description": "ID of the teacher" },
+        "teacherName": { "type": "string", "description": "Name of the teacher" },
+        "date": { "type": "string", "format": "date", "description": "YYYY-MM-DD format date" },
+        "timestamp": { "type": "string", "format": "date-time", "description": "Exact time of attendance capture" },
+        "verificationPhoto": { "type": "string", "description": "Base64 or URL of the photo captured for verification" },
+        "status": { "type": "string", "enum": ["present", "absent"], "description": "Attendance status" },
+        "confidence": { "type": "number", "description": "Matching confidence score from Gemini" }
+      },
+      "required": ["teacherId", "date", "timestamp", "status"]
+    }
+  },
+  "firestore": {
+    "/teachers/{teacherId}": {
+      "schema": "Teacher",
+      "description": "Collection of all registered teachers."
+    },
+    "/attendance/{recordId}": {
+      "schema": "AttendanceRecord",
+      "description": "Daily attendance records for teachers."
+    }
+  }
+}
