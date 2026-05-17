@@ -28,6 +28,27 @@
         "confidence": { "type": "number", "description": "Matching confidence score from Gemini" }
       },
       "required": ["teacherId", "date", "timestamp", "status"]
+    },
+    "AISettings": {
+      "title": "AI Settings",
+      "description": "Global configuration for the AI facial recognition system.",
+      "type": "object",
+      "properties": {
+        "matchThreshold": { "type": "number", "description": "Minimum probability required for a positive match (0.1 - 0.99)" },
+        "livenessSensitivity": { "type": "number", "description": "Strictness of anti-spoofing algorithms (0 - 1)" },
+        "compressionQuality": { "type": "number", "description": "Image compression quality for stored photos (0.1 - 1)" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Last time settings were updated" }
+      },
+      "required": ["matchThreshold", "livenessSensitivity", "compressionQuality"]
+    },
+    "Counter": {
+      "title": "Counter",
+      "description": "Atomically incrementing counters for IDs.",
+      "type": "object",
+      "properties": {
+        "lastId": { "type": "integer", "description": "The last used ID number" }
+      },
+      "required": ["lastId"]
     }
   },
   "firestore": {
@@ -38,6 +59,14 @@
     "/attendance/{recordId}": {
       "schema": "AttendanceRecord",
       "description": "Daily attendance records for teachers."
+    },
+    "/config/{configId}": {
+      "schema": "AISettings",
+      "description": "Global system configuration documents."
+    },
+    "/counters/{counterId}": {
+      "schema": "Counter",
+      "description": "Stores sequence numbers for auto-incrementing fields."
     }
   }
 }

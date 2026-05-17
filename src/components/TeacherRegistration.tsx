@@ -5,16 +5,19 @@
 
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import Webcam from 'react-webcam';
-import { Camera, Upload, UserPlus, CheckCircle2, XCircle, Loader2, Users, FileText, Plus, Trash2, Edit2, Save, X } from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
+import { Camera, Upload, UserPlus, CheckCircle2, XCircle, Loader2, Users, FileText, Plus, Trash2, Edit2, Save, X, Settings, Shield, Sliders, Lock, KeyRound } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Slider } from '@/components/ui/slider';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { db, handleFirestoreError, OperationType } from '@/src/lib/firebase';
-import { collection, addDoc, serverTimestamp, getDocs, query, orderBy, deleteDoc, doc, writeBatch, updateDoc } from 'firebase/firestore';
+import { collection, addDoc, serverTimestamp, getDocs, query, orderBy, deleteDoc, doc, writeBatch, updateDoc, getDoc, setDoc, runTransaction, increment } from 'firebase/firestore';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
 import Papa from 'papaparse';
+import * as XLSX from 'xlsx';
 import { compressImage } from '@/src/lib/imageUtils';
 
 interface TeacherEntry {
@@ -26,7 +29,14 @@ interface TeacherEntry {
 }
 
 export function TeacherRegistration() {
-  const [activeTab, setActiveTab] = useState<'single' | 'bulk'>('single');
+  const [activeTab, setActiveTab] = useState<'single' | 'bulk' | 'settings'>('single');
+  
+  // Admin Auth state
+  const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
+  const [showPinDialog, setShowPinDialog] = useState(false);
+  const [pinInput, setPinInput] = useState('');
+  const [nextTabAfterAuth, setNextTabAfterAuth] = useState<'single' | 'bulk' | 'settings' | null>(null);
+  const [adminPin, setAdminPin] = useState('1234'); // Default PIN
   
   // Single registration state
   const [name, setName] = useState('');
@@ -37,6 +47,12 @@ export function TeacherRegistration() {
   // Bulk registration state
   const [bulkEntries, setBulkEntries] = useState<TeacherEntry[]>([]);
   const [selectedBulkIndex, setSelectedBulkIndex] = useState<number | null>(null);
+
+  // Settings state
+  const [matchThreshold, setMatchThreshold] = useState(0.8);
+  const [livenessSensitivity, setLivenessSensitivity] = useState(0.5);
+  const [compressionQuality, setCompressionQuality] = useState(0.7);
+  const [savingSettings, setSavingSettings] = useState(false);
 
   const [isCapturing, setIsCapturing] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -57,7 +73,58 @@ export function TeacherRegistration() {
 
   useEffect(() => {
     fetchTeachers();
+    fetchSettings();
   }, []);
+
+  const fetchSettings = async () => {
+    try {
+      const configRef = doc(db, "config", "ai_settings");
+      const configSnap = await getDoc(configRef);
+      if (configSnap.exists()) {
+        const data = configSnap.data();
+        if (data.matchThreshold !== undefined) setMatchThreshold(data.matchThreshold);
+        if (data.livenessSensitivity !== undefined) setLivenessSensitivity(data.livenessSensitivity);
+        if (data.compressionQuality !== undefined) setCompressionQuality(data.compressionQuality);
+        if (data.adminPin) setAdminPin(data.adminPin);
+      }
+    } catch (error) {
+      console.error("Error fetching settings:", error);
+    }
+  };
+
+  const handleVerifyPin = () => {
+    if (pinInput === adminPin) {
+      setIsAdminAuthenticated(true);
+      setShowPinDialog(false);
+      setPinInput('');
+      if (nextTabAfterAuth) {
+        setActiveTab(nextTabAfterAuth);
+        setNextTabAfterAuth(null);
+      }
+      toast.success("Admin Access Granted");
+    } else {
+      toast.error("Incorrect PIN");
+      setPinInput('');
+    }
+  };
+
+  const handleSaveSettings = async () => {
+    setSavingSettings(true);
+    try {
+      await setDoc(doc(db, "config", "ai_settings"), {
+        matchThreshold,
+        livenessSensitivity,
+        compressionQuality,
+        adminPin,
+        updatedAt: serverTimestamp()
+      });
+      toast.success("AI & Security Configuration saved!");
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, "config");
+    } finally {
+      setSavingSettings(false);
+    }
+  };
 
   const fetchTeachers = async () => {
     setFetching(true);
@@ -68,20 +135,15 @@ export function TeacherRegistration() {
       const list = querySnapshot.docs.map(doc => ({ dbId: doc.id, ...doc.data() }));
       setTeachers(list);
       
-      // Auto-generate next ID if field is empty (only for single registration)
+      // Fetch next ID from counters
       if (activeTab === 'single' && !employeeId) {
-        if (list.length === 0) {
-          setEmployeeId('EMP-001');
+        const counterRef = doc(db, "counters", "staff_id");
+        const counterSnap = await getDoc(counterRef);
+        if (counterSnap.exists()) {
+          const nextVal = counterSnap.data().lastId + 1;
+          setEmployeeId(`EMP-${String(nextVal).padStart(3, '0')}`);
         } else {
-          let maxId = 0;
-          list.forEach(t => {
-            const match = (t as any).id?.match(/EMP-(\d+)/);
-            if (match) {
-              const num = parseInt(match[1]);
-              if (num > maxId) maxId = num;
-            }
-          });
-          setEmployeeId(`EMP-${String(maxId + 1).padStart(3, '0')}`);
+          setEmployeeId('EMP-001');
         }
       }
     } catch (error) {
@@ -130,7 +192,7 @@ export function TeacherRegistration() {
   const capture = useCallback(() => {
     const imageSrc = webcamRef.current?.getScreenshot();
     if (imageSrc) {
-      compressImage(imageSrc).then(compressed => {
+      compressImage(imageSrc, 800, 800, compressionQuality).then(compressed => {
         if (activeTab === 'single') {
           setPhoto(compressed);
         } else if (selectedBulkIndex !== null) {
@@ -141,7 +203,7 @@ export function TeacherRegistration() {
         setIsCapturing(false);
       });
     }
-  }, [webcamRef, activeTab, selectedBulkIndex, bulkEntries]);
+  }, [webcamRef, activeTab, selectedBulkIndex, bulkEntries, compressionQuality]);
 
   const toggleCamera = () => {
     setFacingMode(prev => prev === 'user' ? 'environment' : 'user');
@@ -157,14 +219,30 @@ export function TeacherRegistration() {
       setLoading(true);
       const path = "teachers";
       try {
-        await addDoc(collection(db, path), {
-          id: employeeId,
-          name,
-          department,
-          photoUrl: photo,
-          status: 'active',
-          createdAt: serverTimestamp()
+        await runTransaction(db, async (transaction) => {
+          const counterRef = doc(db, "counters", "staff_id");
+          const counterSnap = await transaction.get(counterRef);
+          
+          let nextIdNum = 1;
+          if (counterSnap.exists()) {
+            nextIdNum = counterSnap.data().lastId + 1;
+          }
+          
+          const finalId = `EMP-${String(nextIdNum).padStart(3, '0')}`;
+          
+          const newTeacherRef = doc(collection(db, path));
+          transaction.set(newTeacherRef, {
+            id: finalId,
+            name,
+            department,
+            photoUrl: photo,
+            status: 'active',
+            createdAt: serverTimestamp()
+          });
+          
+          transaction.set(counterRef, { lastId: nextIdNum }, { merge: true });
         });
+
         toast.success("Teacher registered successfully!");
         setName('');
         setDepartment('');
@@ -187,20 +265,34 @@ export function TeacherRegistration() {
       setLoading(true);
       const path = "teachers";
       try {
-        const batch = writeBatch(db);
-        validEntries.forEach(entry => {
-          const docRef = doc(collection(db, path));
-          batch.set(docRef, {
-            id: entry.id,
-            name: entry.name,
-            department: entry.department,
-            photoUrl: entry.photo,
-            status: 'active',
-            createdAt: serverTimestamp()
+        await runTransaction(db, async (transaction) => {
+          const counterRef = doc(db, "counters", "staff_id");
+          const counterSnap = await transaction.get(counterRef);
+          
+          let lastIdNum = 0;
+          if (counterSnap.exists()) {
+            lastIdNum = counterSnap.data().lastId;
+          }
+
+          validEntries.forEach((entry, index) => {
+            const nextIdNum = lastIdNum + index + 1;
+            const finalId = `EMP-${String(nextIdNum).padStart(3, '0')}`;
+            
+            const newTeacherRef = doc(collection(db, path));
+            transaction.set(newTeacherRef, {
+              id: finalId, // Overwrite with generated ID
+              name: entry.name,
+              department: entry.department,
+              photoUrl: entry.photo,
+              status: 'active',
+              createdAt: serverTimestamp()
+            });
           });
+          
+          transaction.set(counterRef, { lastId: lastIdNum + validEntries.length }, { merge: true });
         });
-        await batch.commit();
-        toast.success(`Registered ${validEntries.length} teachers successfully!`);
+
+        toast.success(`Registered ${validEntries.length} teachers with auto-assigned IDs!`);
         setBulkEntries([]);
         setSelectedBulkIndex(null);
         fetchTeachers();
@@ -212,15 +304,45 @@ export function TeacherRegistration() {
     }
   };
 
-  const handleCsvUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    Papa.parse(file, {
-      header: true,
-      skipEmptyLines: true,
-      complete: (results) => {
-        const entries: TeacherEntry[] = results.data.map((row: any) => ({
+    const fileName = file.name.toLowerCase();
+    
+    if (fileName.endsWith('.csv')) {
+      Papa.parse(file, {
+        header: true,
+        skipEmptyLines: true,
+        complete: (results) => {
+          const entries: TeacherEntry[] = results.data.map((row: any) => ({
+            name: row.name || row.Name || '',
+            id: row.id || row.ID || row.employee_id || '',
+            department: row.department || row.Department || row.dept || '',
+            photo: null
+          })).filter(e => e.name || e.id);
+
+          if (entries.length > 0) {
+            setBulkEntries([...bulkEntries, ...entries]);
+            toast.success(`Imported ${entries.length} entries from CSV.`);
+          } else {
+            toast.error("No valid data found in CSV. Use headers: name, id, department");
+          }
+        },
+        error: (err) => {
+          toast.error("Failed to parse CSV: " + err.message);
+        }
+      });
+    } else if (fileName.endsWith('.xlsx') || fileName.endsWith('.xls')) {
+      const reader = new FileReader();
+      reader.onload = (evt) => {
+        const bstr = evt.target?.result;
+        const wb = XLSX.read(bstr, { type: 'binary' });
+        const wsname = wb.SheetNames[0];
+        const ws = wb.Sheets[wsname];
+        const data = XLSX.utils.sheet_to_json(ws);
+        
+        const entries: TeacherEntry[] = data.map((row: any) => ({
           name: row.name || row.Name || '',
           id: row.id || row.ID || row.employee_id || '',
           department: row.department || row.Department || row.dept || '',
@@ -229,71 +351,278 @@ export function TeacherRegistration() {
 
         if (entries.length > 0) {
           setBulkEntries([...bulkEntries, ...entries]);
-          toast.success(`Imported ${entries.length} entries. Please add photos!`);
+          toast.success(`Imported ${entries.length} entries from Excel.`);
         } else {
-          toast.error("No valid data found in CSV. Use headers: name, id, department");
+          toast.error("No valid data found in Excel. Use headers: name, id, department");
         }
-      },
-      error: (err) => {
-        toast.error("Failed to parse CSV: " + err.message);
-      }
-    });
+      };
+      reader.onerror = () => toast.error("Failed to read Excel file");
+      reader.readAsBinaryString(file);
+    } else {
+      toast.error("Unsupported file format. Please upload CSV or Excel (.xlsx, .xls)");
+    }
+    
     // Reset input
     e.target.value = '';
   };
 
   return (
     <>
-      <div className="max-w-xl mx-auto mb-8 flex gap-2 p-1 bg-natural-bg/50 rounded-2xl border border-black/[0.03]">
+      <AnimatePresence>
+        {showPinDialog && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/60 backdrop-blur-md z-[110] flex items-center justify-center p-4"
+          >
+            <motion.div 
+              initial={{ scale: 0.9, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              className="bg-white natural-card w-full max-w-sm overflow-hidden shadow-2xl p-8"
+            >
+              <div className="flex flex-col items-center text-center gap-6">
+                <div className="w-16 h-16 bg-natural-primary/10 rounded-full flex items-center justify-center text-natural-primary">
+                  <Lock size={32} />
+                </div>
+                <div className="space-y-2">
+                  <h2 className="text-xl font-black text-natural-primary italic tracking-tight uppercase">Admin Access Required</h2>
+                  <p className="text-xs font-bold text-natural-primary/40 uppercase tracking-widest leading-relaxed">
+                    Please enter the secure PIN to modify system configurations.
+                  </p>
+                </div>
+                
+                <div className="w-full space-y-4">
+                  <div className="relative">
+                    <KeyRound className="absolute left-4 top-1/2 -translate-y-1/2 text-natural-primary/30" size={20} />
+                    <Input 
+                      type="password" 
+                      value={pinInput}
+                      onChange={(e) => setPinInput(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && handleVerifyPin()}
+                      placeholder="ENTER PIN" 
+                      className="h-14 pl-12 rounded-2xl bg-natural-bg/50 border-2 border-transparent focus:border-indigo-500/20 transition-all font-black tracking-[0.5em] text-center text-lg"
+                      autoFocus
+                    />
+                  </div>
+                  
+                  <div className="flex gap-3">
+                    <Button 
+                      variant="outline" 
+                      className="flex-1 h-12 rounded-xl font-bold"
+                      onClick={() => {
+                        setShowPinDialog(false);
+                        setPinInput('');
+                        setNextTabAfterAuth(null);
+                      }}
+                    >
+                      Cancel
+                    </Button>
+                    <Button 
+                      className="flex-1 h-12 rounded-xl font-bold bg-natural-primary hover:bg-indigo-700"
+                      onClick={handleVerifyPin}
+                    >
+                      Verify
+                    </Button>
+                  </div>
+                </div>
+                
+                <p className="text-[10px] font-bold text-natural-primary/20 uppercase tracking-tighter">
+                  Authorized Personnel Only
+                </p>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <div className="w-full max-w-xl mx-auto mb-6 md:mb-8 flex gap-1 md:gap-2 p-1 bg-natural-bg/50 rounded-2xl border border-black/[0.03]">
         <Button 
           variant={activeTab === 'single' ? 'default' : 'ghost'}
           onClick={() => setActiveTab('single')}
-          className={`flex-1 h-12 rounded-xl font-bold transition-all ${activeTab === 'single' ? 'bg-natural-primary shadow-lg' : 'text-natural-primary/60'}`}
+          className={`flex-1 h-10 md:h-12 rounded-xl font-bold transition-all text-xs md:text-sm ${activeTab === 'single' ? 'bg-natural-primary shadow-lg' : 'text-natural-primary/60'}`}
         >
-          <UserPlus size={18} className="mr-2" /> Single
+          <UserPlus size={16} className="mr-1.5 md:mr-2" /> Register
         </Button>
         <Button 
           variant={activeTab === 'bulk' ? 'default' : 'ghost'}
           onClick={() => setActiveTab('bulk')}
-          className={`flex-1 h-12 rounded-xl font-bold transition-all ${activeTab === 'bulk' ? 'bg-natural-primary shadow-lg' : 'text-natural-primary/60'}`}
+          className={`flex-1 h-10 md:h-12 rounded-xl font-bold transition-all text-xs md:text-sm ${activeTab === 'bulk' ? 'bg-natural-primary shadow-lg' : 'text-natural-primary/60'}`}
         >
-          <Users size={18} className="mr-2" /> Bulk Upload
+          <Users size={16} className="mr-1.5 md:mr-2 md:w-[18px] md:h-[18px]" /> Bulk
+        </Button>
+        <Button 
+          variant={activeTab === 'settings' ? 'default' : 'ghost'}
+          onClick={() => {
+            if (isAdminAuthenticated) {
+              setActiveTab('settings');
+            } else {
+              setNextTabAfterAuth('settings');
+              setShowPinDialog(true);
+            }
+          }}
+          className={`flex-1 h-10 md:h-12 rounded-xl font-bold transition-all text-xs md:text-sm ${activeTab === 'settings' ? 'bg-natural-primary shadow-lg' : 'text-natural-primary/60'}`}
+        >
+          <Settings size={16} className="mr-1.5 md:mr-2 md:w-[18px] md:h-[18px]" /> Config
         </Button>
       </div>
 
-      <Card className="max-w-xl mx-auto natural-card border-none overflow-hidden shadow-2xl">
-      <CardHeader className="bg-natural-bg/50 p-6 border-b border-black/[0.03]">
-        <div className="flex items-center gap-4">
-          <div className="p-3 bg-gradient-to-br from-natural-primary to-indigo-600 rounded-2xl text-white shadow-lg">
-            {activeTab === 'single' ? <UserPlus size={24} /> : <Users size={24} />}
+      <Card className="w-full max-w-xl mx-auto natural-card border-none overflow-hidden shadow-2xl">
+      <CardHeader className="bg-natural-bg/50 p-4 md:p-6 border-b border-black/[0.03]">
+        <div className="flex items-center gap-3 md:gap-4">
+          <div className="p-2.5 md:p-3 bg-gradient-to-br from-natural-primary to-indigo-600 rounded-xl md:rounded-2xl text-white shadow-lg">
+            {activeTab === 'single' ? <UserPlus size={20} className="md:w-6 md:h-6" /> : activeTab === 'bulk' ? <Users size={20} className="md:w-6 md:h-6" /> : <Settings size={20} className="md:w-6 md:h-6" />}
           </div>
           <div>
-            <CardTitle className="text-xl font-black text-natural-primary italic tracking-tight">
-              {activeTab === 'single' ? 'NEW FACULTY' : 'BULK REGISTRATION'}
+            <CardTitle className="text-lg md:text-xl font-black text-natural-primary italic tracking-tight">
+              {activeTab === 'single' ? 'FACULTY REGISTER' : activeTab === 'bulk' ? 'BULK IMPORT' : 'AI SYSTEM SETTINGS'}
             </CardTitle>
-            <CardDescription className="text-[10px] font-bold uppercase tracking-widest text-natural-primary/40">
-              {activeTab === 'single' ? 'Secure Registration' : 'Import Multiple Staff'}
+            <CardDescription className="text-[8px] md:text-[10px] font-bold uppercase tracking-widest text-natural-primary/40">
+              {activeTab === 'single' ? 'Secure Enrollment' : activeTab === 'bulk' ? 'Staff Directory Import' : 'Global Detection Tuning'}
             </CardDescription>
           </div>
         </div>
       </CardHeader>
       
-      <CardContent className="p-8 space-y-8">
-        {activeTab === 'single' ? (
+      <CardContent className="p-4 md:p-8 space-y-6 md:space-y-8">
+        {activeTab === 'settings' ? (
+          <div className="space-y-10">
+            <div className="p-4 bg-indigo-50 border border-indigo-100 rounded-2xl flex items-center justify-between">
+              <div className="space-y-1">
+                <Label className="text-sm font-bold text-natural-primary flex items-center gap-2">
+                  <Lock size={16} className="text-indigo-600" /> Admin Access Tool
+                </Label>
+                <p className="text-[10px] text-natural-primary/40 font-medium tracking-wide uppercase">
+                  Current PIN is: <span className="font-black text-indigo-700">••••</span>
+                </p>
+              </div>
+              <Button 
+                variant="outline" 
+                size="sm" 
+                className="rounded-xl border-indigo-500/20 font-bold h-9"
+                onClick={() => {
+                  const newPin = prompt("Enter new 4-6 digit Admin PIN:", adminPin);
+                  if (newPin && newPin.length >= 4 && newPin.length <= 6 && /^\d+$/.test(newPin)) {
+                    setAdminPin(newPin);
+                    toast.info("PIN updated in memory. Save settings to persist.");
+                  } else if (newPin) {
+                    toast.error("Invalid PIN format");
+                  }
+                }}
+              >
+                Change PIN
+              </Button>
+            </div>
+
+            <div className="space-y-6">
+              <div className="flex items-center justify-between">
+                <div className="space-y-1">
+                  <Label className="text-sm font-bold text-natural-primary flex items-center gap-2">
+                    <Sliders size={16} className="text-indigo-500" /> Match Confidence
+                  </Label>
+                  <p className="text-[10px] text-natural-primary/40 font-medium tracking-wide">
+                    Determines how strictly the AI matches faces. 
+                    <span className={`font-bold ml-1 ${matchThreshold > 0.85 ? 'text-indigo-600' : matchThreshold > 0.6 ? 'text-indigo-500/60' : 'text-amber-500'}`}>
+                      {matchThreshold > 0.85 ? 'High Security' : matchThreshold > 0.6 ? 'Balanced' : 'High Tolerance'}
+                    </span>
+                  </p>
+                </div>
+                <span className="text-xs font-black text-indigo-600 bg-indigo-50 px-2 py-1 rounded-lg">{(matchThreshold * 100).toFixed(0)}%</span>
+              </div>
+              <Slider 
+                value={[matchThreshold]} 
+                min={0.1} 
+                max={0.99} 
+                step={0.01} 
+                onValueChange={(val) => setMatchThreshold(val[0])}
+                className="py-4"
+              />
+              <div className="flex justify-between text-[8px] font-black uppercase tracking-widest text-natural-primary/20">
+                <span>Loose</span>
+                <span>Strict</span>
+              </div>
+            </div>
+
+            <div className="space-y-6">
+              <div className="flex items-center justify-between">
+                <div className="space-y-1">
+                  <Label className="text-sm font-bold text-natural-primary flex items-center gap-2">
+                    <Shield size={16} className="text-rose-500" /> Liveness Sensitivity
+                  </Label>
+                  <p className="text-[10px] text-natural-primary/40 font-medium tracking-wide">
+                    Strictness of anti-spoofing (screen detection). 
+                    <span className={`font-bold ml-1 ${livenessSensitivity > 0.7 ? 'text-rose-600' : livenessSensitivity > 0.3 ? 'text-rose-500/60' : 'text-natural-primary/40'}`}>
+                      {livenessSensitivity > 0.7 ? 'Ultra Strict' : livenessSensitivity > 0.3 ? 'Standard' : 'Disabled / Low'}
+                    </span>
+                  </p>
+                </div>
+                <span className="text-xs font-black text-rose-600 bg-rose-50 px-2 py-1 rounded-lg">{(livenessSensitivity * 100).toFixed(0)}%</span>
+              </div>
+              <Slider 
+                value={[livenessSensitivity]} 
+                min={0} 
+                max={1} 
+                step={0.1} 
+                onValueChange={(val) => setLivenessSensitivity(val[0])}
+                className="py-4"
+              />
+              <div className="flex justify-between text-[8px] font-black uppercase tracking-widest text-natural-primary/20">
+                <span>Permissive</span>
+                <span>Maximum Shield</span>
+              </div>
+            </div>
+
+            <div className="space-y-6">
+              <div className="flex items-center justify-between">
+                <div className="space-y-1">
+                  <Label className="text-sm font-bold text-natural-primary flex items-center gap-2">
+                    <Upload size={16} className="text-emerald-500" /> Image Compression
+                  </Label>
+                  <p className="text-[10px] text-natural-primary/40 font-medium tracking-wide">
+                    Balance between visual clarity and storage speed. 
+                    <span className={`font-bold ml-1 ${compressionQuality > 0.8 ? 'text-emerald-600' : compressionQuality > 0.4 ? 'text-emerald-500/60' : 'text-amber-500'}`}>
+                      {compressionQuality > 0.8 ? 'HD Quality' : compressionQuality > 0.4 ? 'Optimized' : 'Small / Low Res'}
+                    </span>
+                  </p>
+                </div>
+                <span className="text-xs font-black text-emerald-600 bg-emerald-50 px-2 py-1 rounded-lg">{(compressionQuality * 100).toFixed(0)}%</span>
+              </div>
+              <Slider 
+                value={[compressionQuality]} 
+                min={0.1} 
+                max={1} 
+                step={0.05} 
+                onValueChange={(val) => setCompressionQuality(val[0])}
+                className="py-4"
+              />
+              <div className="flex justify-between text-[8px] font-black uppercase tracking-widest text-natural-primary/20">
+                <span>Fast Save</span>
+                <span>Crystal Clear</span>
+              </div>
+            </div>
+
+            <div className="p-4 bg-amber-50 border border-amber-100 rounded-2xl">
+              <p className="text-[10px] text-amber-700 font-bold leading-relaxed">
+                <span className="uppercase text-[8px] tracking-widest block mb-1">Warning:</span>
+                Higher sensitivity may lead to more "Spoof Alert" errors if lighting is poor. Lower match confidence increases "False Positives" (marking the wrong person).
+              </p>
+            </div>
+          </div>
+        ) : activeTab === 'single' ? (
           <div className="space-y-6">
             <div className="space-y-2">
               <Label htmlFor="name" className="text-[10px] font-black text-indigo-500 uppercase tracking-widest ml-1">Full Name</Label>
               <Input id="name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Teacher Full Name" className="h-14 rounded-2xl bg-natural-bg/50 border-2 border-transparent focus:border-indigo-500/20 transition-all shadow-sm font-bold" />
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-2 gap-3 md:gap-4">
               <div className="space-y-2">
-                <Label htmlFor="id" className="text-[10px] font-black text-blue-500 uppercase tracking-widest ml-1">Staff ID</Label>
-                <Input id="id" value={employeeId} onChange={(e) => setEmployeeId(e.target.value)} placeholder="EMP-000" className="h-14 rounded-2xl bg-natural-bg/50 border-2 border-transparent focus:border-blue-500/20 transition-all shadow-sm font-bold" />
+                <Label htmlFor="id" className="text-[10px] font-black text-blue-500 uppercase tracking-widest ml-1">Staff ID (Auto)</Label>
+                <Input id="id" value={employeeId} readOnly placeholder="EMP-001" className="h-12 md:h-14 rounded-xl md:rounded-2xl bg-natural-bg/30 border-2 border-transparent transition-all shadow-sm font-black text-sm md:text-base text-blue-600 disabled:opacity-100" />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="dept" className="text-[10px] font-black text-rose-500 uppercase tracking-widest ml-1">Department</Label>
-                <Input id="dept" value={department} onChange={(e) => setDepartment(e.target.value)} placeholder="e.g. Maths" className="h-14 rounded-2xl bg-natural-bg/50 border-2 border-transparent focus:border-rose-500/20 transition-all shadow-sm font-bold" />
+                <Label htmlFor="dept" className="text-[10px] font-black text-rose-500 uppercase tracking-widest ml-1">Dept.</Label>
+                <Input id="dept" value={department} onChange={(e) => setDepartment(e.target.value)} placeholder="e.g. Maths" className="h-12 md:h-14 rounded-xl md:rounded-2xl bg-natural-bg/50 border-2 border-transparent focus:border-rose-500/20 transition-all shadow-sm font-bold text-sm md:text-base" />
               </div>
             </div>
           </div>
@@ -304,16 +633,16 @@ export function TeacherRegistration() {
                   <FileText size={32} />
                 </div>
                 <div className="text-center">
-                  <p className="text-sm font-bold text-natural-primary">Upload CSV File</p>
+                  <p className="text-sm font-bold text-natural-primary">Upload CSV or Excel File</p>
                   <p className="text-[10px] font-medium text-natural-primary/40 mt-1 uppercase tracking-widest">Headers: name, id, department</p>
                 </div>
                 <div className="relative">
                   <input 
                     type="file" 
                     id="csv-upload" 
-                    accept=".csv" 
+                    accept=".csv,.xlsx,.xls" 
                     className="hidden" 
-                    onChange={handleCsvUpload} 
+                    onChange={handleFileUpload} 
                   />
                   <Button 
                     variant="outline" 
@@ -472,7 +801,7 @@ export function TeacherRegistration() {
                           if (file) {
                             const reader = new FileReader();
                             reader.onloadend = async () => {
-                              const compressed = await compressImage(reader.result as string);
+                              const compressed = await compressImage(reader.result as string, 800, 800, compressionQuality);
                               if (activeTab === 'single') setPhoto(compressed);
                               else {
                                 const newEntries = [...bulkEntries];
@@ -501,50 +830,65 @@ export function TeacherRegistration() {
       </CardContent>
 
       <CardFooter className="p-6 pt-0">
-        <Button 
-          className="w-full h-14 text-lg font-bold bg-natural-accent hover:bg-natural-accent/90 text-white rounded-2xl shadow-lg transition-all active:scale-[0.98] disabled:opacity-50" 
-          onClick={handleRegister}
-          disabled={loading || isCapturing || (activeTab === 'bulk' && bulkEntries.length === 0)}
-        >
-          {loading ? (
-            <Loader2 className="animate-spin mr-2" />
-          ) : (
-            <CheckCircle2 className="mr-2" size={20} />
-          )}
-          {activeTab === 'single' ? 'Complete Registration' : `Register ${bulkEntries.filter(e => e.photo).length} Profiles`}
-        </Button>
+        {activeTab === 'settings' ? (
+          <Button 
+            className="w-full h-14 text-lg font-bold bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl shadow-lg transition-all active:scale-[0.98] disabled:opacity-50" 
+            onClick={handleSaveSettings}
+            disabled={savingSettings}
+          >
+            {savingSettings ? (
+              <Loader2 className="animate-spin mr-2" />
+            ) : (
+              <Save className="mr-2" size={20} />
+            )}
+            Save AI System Settings
+          </Button>
+        ) : (
+          <Button 
+            className="w-full h-14 text-lg font-bold bg-natural-accent hover:bg-natural-accent/90 text-white rounded-2xl shadow-lg transition-all active:scale-[0.98] disabled:opacity-50" 
+            onClick={handleRegister}
+            disabled={loading || isCapturing || (activeTab === 'bulk' && bulkEntries.length === 0)}
+          >
+            {loading ? (
+              <Loader2 className="animate-spin mr-2" />
+            ) : (
+              <CheckCircle2 className="mr-2" size={20} />
+            )}
+            {activeTab === 'single' ? 'Complete Registration' : `Register ${bulkEntries.filter(e => e.photo).length} Profiles`}
+          </Button>
+        )}
       </CardFooter>
     </Card>
 
-    <div className="max-w-xl mx-auto mt-12 space-y-6">
-      <div className="flex items-center justify-between px-2">
-        <div className="space-y-1">
-          <h2 className="text-[12px] font-black text-natural-accent uppercase tracking-[0.2em]">Registered Staff</h2>
-          <p className="text-natural-primary/40 text-[10px] font-bold uppercase tracking-tight">Active Faculty Directory</p>
+    <div className="w-full max-w-xl mx-auto mt-8 md:mt-12 space-y-4 md:space-y-6 px-1">
+      <div className="flex items-center justify-between px-1 md:px-2">
+        <div className="space-y-0.5 md:space-y-1">
+          <h2 className="text-[10px] md:text-[12px] font-black text-natural-accent uppercase tracking-[0.2em]">REGISTERED STAFF</h2>
+          <p className="text-natural-primary/40 text-[8px] md:text-[10px] font-bold uppercase tracking-tight italic">Profile Directory</p>
         </div>
-        <div className="bg-natural-card px-4 py-1.5 rounded-full border border-black/5 shadow-sm">
-           <span className="text-[10px] font-black text-natural-primary">{teachers.length} PROFILES</span>
+        <div className="bg-natural-card px-3 md:px-4 py-1 md:py-1.5 rounded-full border border-black/5 shadow-sm">
+           <span className="text-[9px] md:text-[10px] font-black text-natural-primary">{teachers.length} PROFILES</span>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-4">
+      <div className="grid grid-cols-1 gap-3 md:gap-4">
         {editingTeacher && (
-          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
-            <Card className="w-full max-w-md natural-card border-none overflow-hidden shadow-2xl animate-in fade-in zoom-in duration-200">
-              <CardHeader className="bg-natural-bg/80 p-6 border-b border-black/[0.03]">
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-md z-[100] flex items-end md:items-center justify-center p-0 md:p-4">
+            <Card className="w-full md:max-w-md natural-card border-none overflow-hidden shadow-2xl animate-in slide-in-from-bottom md:zoom-in duration-300 rounded-t-[32px] md:rounded-[32px]">
+              <CardHeader className="bg-natural-bg/80 p-5 md:p-6 border-b border-black/[0.03]">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
                     <div className="p-2 bg-indigo-500 rounded-xl text-white">
                       <Edit2 size={18} />
                     </div>
-                    <CardTitle className="text-lg font-black text-natural-primary italic">EDIT PROFILE</CardTitle>
+                    <CardTitle className="text-lg font-black text-natural-primary italic uppercase tracking-tighter">Edit Profile</CardTitle>
                   </div>
-                  <Button variant="ghost" size="icon" onClick={() => setEditingTeacher(null)} className="rounded-full">
-                    <X size={20} />
+                  <Button variant="ghost" size="icon" onClick={() => setEditingTeacher(null)} className="rounded-full h-10 w-10">
+                    <X size={24} />
                   </Button>
                 </div>
               </CardHeader>
-              <CardContent className="p-6 space-y-4">
+              <CardContent className="p-5 md:p-6 space-y-4 max-h-[70vh] overflow-y-auto">
                 <div className="flex flex-col items-center gap-4 mb-6">
                   <div className="relative group">
                     <div className="w-32 h-32 rounded-2xl overflow-hidden shadow-lg border-4 border-white">
@@ -589,7 +933,7 @@ export function TeacherRegistration() {
                           onClick={() => {
                             const imageSrc = webcamRef.current?.getScreenshot();
                             if (imageSrc) {
-                              compressImage(imageSrc).then(compressed => {
+                              compressImage(imageSrc, 800, 800, compressionQuality).then(compressed => {
                                 setEditPhoto(compressed);
                                 setIsCapturingEdit(false);
                               });
@@ -638,7 +982,7 @@ export function TeacherRegistration() {
                                 if (file) {
                                   const reader = new FileReader();
                                   reader.onloadend = async () => {
-                                    const compressed = await compressImage(reader.result as string);
+                                    const compressed = await compressImage(reader.result as string, 800, 800, compressionQuality);
                                     setEditPhoto(compressed);
                                   };
                                   reader.readAsDataURL(file);
@@ -667,8 +1011,8 @@ export function TeacherRegistration() {
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
-                      <Label className="text-[10px] font-black text-blue-500 uppercase tracking-widest ml-1">Staff ID</Label>
-                      <Input value={editEmpId} onChange={(e) => setEditEmpId(e.target.value)} className="h-12 rounded-xl bg-natural-bg/50 font-bold" />
+                      <Label className="text-[10px] font-black text-blue-500 uppercase tracking-widest ml-1">Staff ID (Fixed)</Label>
+                      <Input value={editEmpId} readOnly className="h-12 rounded-xl bg-natural-bg/30 border-none font-black text-blue-600 disabled:opacity-100" />
                     </div>
                     <div className="space-y-2">
                       <Label className="text-[10px] font-black text-rose-500 uppercase tracking-widest ml-1">Department</Label>
@@ -689,7 +1033,7 @@ export function TeacherRegistration() {
                 </div>
                 <Button 
                   variant={confirmDeleteId === editingTeacher?.dbId ? "destructive" : "ghost"} 
-                  className={`w-full h-10 font-bold rounded-xl gap-2 transition-all ${confirmDeleteId === editingTeacher?.dbId ? "bg-red-600 animate-pulse" : "text-red-500 hover:text-red-600 hover:bg-red-50"}`}
+                  className={`w-full h-10 font-bold rounded-xl gap-2 transition-all ${confirmDeleteId === editingTeacher?.dbId ? "bg-red-600 animate-pulse text-white" : "text-red-500 hover:text-red-600 hover:bg-red-50"}`}
                   disabled={updating || deletingId === editingTeacher?.dbId}
                   onClick={async () => {
                     if (!editingTeacher?.dbId) return;
@@ -718,7 +1062,7 @@ export function TeacherRegistration() {
                   {deletingId === editingTeacher?.dbId ? (
                     <Loader2 size={16} className="animate-spin" />
                   ) : confirmDeleteId === editingTeacher?.dbId ? (
-                    <>Confirm Delete?</>
+                    <span className="text-white italic">Confirm Permanent Delete</span>
                   ) : (
                     <><Trash2 size={16} /> Delete Profile</>
                   )}
@@ -740,25 +1084,22 @@ export function TeacherRegistration() {
           </div>
         ) : (
           teachers.map((teacher) => (
-            <div key={teacher.dbId} className="bg-white p-4 rounded-[28px] border border-black/5 shadow-sm flex items-center gap-4 group hover:border-natural-accent/20 transition-all">
-              <div className="h-16 w-16 rounded-2xl overflow-hidden shadow-md border-2 border-white flex-shrink-0">
+            <div key={teacher.dbId} className="bg-white p-3 md:p-4 rounded-[22px] md:rounded-[28px] border border-black/5 shadow-sm flex items-center gap-3 md:gap-4 group hover:border-natural-accent/20 transition-all">
+              <div className="h-14 w-14 md:h-16 md:w-16 rounded-xl md:rounded-2xl overflow-hidden shadow-md border-2 border-white flex-shrink-0">
                 <img src={teacher.photoUrl} className="h-full w-full object-cover" alt={teacher.name} />
               </div>
-              <div className="flex-1 min-w-0 pr-2">
-                <h3 className="font-bold text-natural-primary text-sm sm:text-base leading-tight">{teacher.name}</h3>
-                <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mt-1">
-                  <span className="text-[9px] bg-natural-bg/50 px-2 py-0.5 rounded-full text-natural-primary/60 font-black uppercase tracking-widest border border-black/5">{teacher.id}</span>
-                  <span className="text-[9px] font-black text-natural-accent uppercase tracking-wider">{teacher.department}</span>
+              <div className="flex-1 min-w-0 pr-1 md:pr-2">
+                <h3 className="font-bold text-natural-primary text-sm leading-tight truncate">{teacher.name}</h3>
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mt-0.5 md:mt-1">
+                  <span className="text-[8px] md:text-[9px] bg-natural-bg/50 px-1.5 md:px-2 py-0.5 rounded-full text-natural-primary/60 font-black uppercase tracking-widest border border-black/5">{teacher.id}</span>
+                  <span className="text-[8px] md:text-[9px] font-black text-natural-accent uppercase tracking-wider italic">{teacher.department}</span>
                 </div>
               </div>
-              <div className="hidden sm:block text-[10px] font-bold text-natural-primary/20 mr-2 whitespace-nowrap">
-                {teacher.createdAt?.toDate ? format(teacher.createdAt.toDate(), 'MMM d, yyyy') : ''}
-              </div>
-              <div className="flex gap-2">
+              <div className="flex gap-1.5 md:gap-2">
                 <Button 
                   variant="outline" 
                   size="icon"
-                  className="h-11 w-11 rounded-2xl flex-shrink-0 shadow-sm transition-all active:scale-95 border-2 border-black/5 hover:border-indigo-500/30 hover:bg-indigo-50"
+                  className="h-10 w-10 md:h-11 md:w-11 rounded-xl md:rounded-2xl flex-shrink-0 shadow-sm transition-all active:scale-95 border border-black/5 hover:border-indigo-500/30 hover:bg-indigo-50"
                   onClick={() => startEdit(teacher)}
                 >
                   <Edit2 size={18} className="text-indigo-600" />
@@ -766,7 +1107,7 @@ export function TeacherRegistration() {
                 <Button 
                   variant={confirmDeleteId === teacher.dbId ? "destructive" : "destructive"} 
                   size={confirmDeleteId === teacher.dbId ? "default" : "icon"}
-                  className={`h-11 rounded-2xl flex-shrink-0 shadow-lg transition-all active:scale-95 bg-red-500 hover:bg-red-600 border-2 border-white ${confirmDeleteId === teacher.dbId ? "px-4 w-auto" : "w-11"}`}
+                  className={`h-10 md:h-11 rounded-xl md:rounded-2xl flex-shrink-0 shadow-lg transition-all active:scale-95 bg-red-500 hover:bg-red-600 border border-white ${confirmDeleteId === teacher.dbId ? "px-3 md:px-4 w-auto text-white" : "w-10 md:w-11"}`}
                   disabled={deletingId === teacher.dbId}
                   onClick={async (e) => {
                     e.preventDefault();
@@ -795,7 +1136,7 @@ export function TeacherRegistration() {
                   {deletingId === teacher.dbId ? (
                     <Loader2 size={18} className="animate-spin" />
                   ) : confirmDeleteId === teacher.dbId ? (
-                    <span className="text-[10px] font-bold">CONFIRM?</span>
+                    <span className="text-[8px] md:text-[10px] font-black text-white italic tracking-wider">DELETE?</span>
                   ) : (
                     <Trash2 size={18} />
                   )}
