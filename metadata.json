@@ -5,7 +5,6 @@
     "camera"
   ],
   "majorCapabilities": [
-    "Facial Verification",
-    "Real-time Attendance Logging"
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
   ]
 }

@@ -133,9 +133,16 @@ export function AttendanceKiosk() {
   const handleCapture = async (isAuto = false) => {
     if (verifying) return;
     
-    const imageSrc = webcamRef.current?.getScreenshot();
-    if (!imageSrc) {
-      if (!isAuto) toast.error("Failed to capture photo");
+    if (!webcamRef.current) {
+      if (!isAuto) toast.error("Camera system not initialized");
+      return;
+    }
+
+    const imageSrc = webcamRef.current.getScreenshot();
+    
+    if (!imageSrc || imageSrc === 'data:,' || imageSrc.length < 100) {
+      console.warn("Capture failed or returned invalid data URL:", imageSrc?.substring(0, 50));
+      if (!isAuto) toast.error("Failed to capture a clear photo. Please wait for camera to focus.");
       return;
     }
 
