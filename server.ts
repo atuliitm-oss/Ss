@@ -15,7 +15,8 @@ async function startServer() {
   const getAi = () => {
     const key = process.env.GEMINI_API_KEY;
     if (!key) {
-      throw new Error("GEMINI_API_KEY is not defined in environment variables.");
+      console.error("[API] GEMINI_API_KEY is missing from environment variables!");
+      throw new Error("API Key for AI service is not configured. Please add GEMINI_API_KEY to your app settings.");
     }
     return new GoogleGenAI({ apiKey: key });
   };
@@ -25,7 +26,12 @@ async function startServer() {
     try {
       const { capturedPhotoBase64, teachers, options } = req.body;
       
-      console.log(`[API] Identify request: PhotoLen=${capturedPhotoBase64?.length}, Teachers=${teachers?.length}`);
+      const apiKeyExists = !!process.env.GEMINI_API_KEY;
+      console.log(`[API] Identify request: PhotoLen=${capturedPhotoBase64?.length}, Teachers=${teachers?.length}, KeyExists=${apiKeyExists}`);
+
+      if (!capturedPhotoBase64) {
+        return res.status(400).json({ error: "No image data provided. Please capture a photo." });
+      }
 
       const ai = getAi();
 
@@ -128,10 +134,10 @@ async function startServer() {
         }
       });
 
-      const modelName = "gemini-3-flash-preview";
+      const modelName = "gemini-1.5-flash";
       const result = await ai.models.generateContent({
         model: modelName,
-        contents: { parts: imageParts },
+        contents: [{ role: "user", parts: imageParts }],
         config: {
           responseMimeType: "application/json",
           responseSchema: {
@@ -150,10 +156,11 @@ async function startServer() {
       });
 
       const responseText = result.text;
+      console.log(`[API] AI Result: ${responseText?.substring(0, 100)}...`);
       res.json(JSON.parse(responseText || "{}"));
     } catch (error: any) {
-      console.error("Server API Error:", error);
-      res.status(500).json({ error: error.message || "Internal Server Error" });
+      console.error("Server API Error Details:", error);
+      res.status(500).json({ error: error.message || "Face recognition service failed. Please check your internet and API key settings." });
     }
   });
 
