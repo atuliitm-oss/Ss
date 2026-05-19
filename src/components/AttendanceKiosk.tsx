@@ -10,12 +10,13 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { db, handleFirestoreError, OperationType } from '@/src/lib/firebase';
-import { collection, query, where, getDocs, addDoc, serverTimestamp, doc, getDoc } from 'firebase/firestore';
+import { collection, query, where, getDocs, addDoc, serverTimestamp, doc, getDoc, onSnapshot } from 'firebase/firestore';
 import { identifyTeacher } from '@/src/services/geminiService';
 import { compressImage } from '@/src/lib/imageUtils';
 import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'motion/react';
 import { format } from 'date-fns';
+import { WifiOff, ShieldAlert } from 'lucide-react';
 
 export function AttendanceKiosk() {
   const [teachers, setTeachers] = useState<any[]>([]);
@@ -32,12 +33,15 @@ export function AttendanceKiosk() {
     isAlreadyMarked?: boolean 
   } | null>(null);
   const [capturedPhoto, setCapturedPhoto] = useState<string | null>(null);
+  const [cameraReady, setCameraReady] = useState(false);
+  const [cameraError, setCameraError] = useState<string | null>(null);
   const [step, setStep] = useState<'capture' | 'result'>('capture');
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
   const [isAutoScanEnabled, setIsAutoScanEnabled] = useState(true);
   const [isAutoScanning, setIsAutoScanning] = useState(false);
   const [quotaPaused, setQuotaPaused] = useState(false);
   const [quotaCountdown, setQuotaCountdown] = useState(0);
+  const [isOffline, setIsOffline] = useState(false);
 
   const webcamRef = useRef<Webcam>(null);
   const scanTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -46,6 +50,17 @@ export function AttendanceKiosk() {
   useEffect(() => {
     fetchTeachers();
     fetchSettings();
+
+    // Monitor online/offline status
+    const handleOnline = () => setIsOffline(false);
+    const handleOffline = () => setIsOffline(true);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
   }, []);
 
   // Auto-reset result screen after 5 seconds if auto-scan is on
@@ -84,7 +99,7 @@ export function AttendanceKiosk() {
     if (step === 'capture' && teachers.length > 0 && !loading && !verifying && !quotaPaused && isAutoScanEnabled) {
       interval = setInterval(() => {
         handleCapture(true); // pass true for auto-scan
-      }, 5000); // Reduced to 5 seconds for more responsive CCTV monitoring
+      }, 30000); // 30 seconds to preserve quota while still monitoring
     }
 
     return () => {
@@ -92,13 +107,14 @@ export function AttendanceKiosk() {
     };
   }, [step, teachers, loading, verifying, quotaPaused, isAutoScanEnabled]);
 
-  // Reset quota pause after 2 minutes
+  // Reset quota pause after 5 minutes
   useEffect(() => {
     let timer: NodeJS.Timeout;
     let interval: NodeJS.Timeout;
+    const cooldownPeriod = 300; // 5 minutes
 
     if (quotaPaused) {
-      setQuotaCountdown(120);
+      setQuotaCountdown(cooldownPeriod);
       interval = setInterval(() => {
         setQuotaCountdown(prev => Math.max(0, prev - 1));
       }, 1000);
@@ -106,7 +122,7 @@ export function AttendanceKiosk() {
       timer = setTimeout(() => {
         setQuotaPaused(false);
         setQuotaCountdown(0);
-      }, 120000);
+      }, cooldownPeriod * 1000);
     }
     
     return () => {
@@ -138,11 +154,22 @@ export function AttendanceKiosk() {
       return;
     }
 
-    const imageSrc = webcamRef.current.getScreenshot();
+    if (!cameraReady && !isAuto) {
+      toast.error("Please wait for camera to initialize");
+      return;
+    }
+
+    let imageSrc = webcamRef.current.getScreenshot();
+    
+    // Retry once after a short delay if it's null or empty (common when camera just started)
+    if (!imageSrc || imageSrc === 'data:,' || imageSrc.length < 100) {
+      await new Promise(resolve => setTimeout(resolve, 500));
+      imageSrc = webcamRef.current.getScreenshot();
+    }
     
     if (!imageSrc || imageSrc === 'data:,' || imageSrc.length < 100) {
-      console.warn("Capture failed or returned invalid data URL:", imageSrc?.substring(0, 50));
-      if (!isAuto) toast.error("Failed to capture a clear photo. Please wait for camera to focus.");
+      console.warn("Capture failed after retry. Length:", imageSrc?.length);
+      if (!isAuto) toast.error("Failed to capture a clear photo. Please ensure camera permission is granted and visible.");
       return;
     }
 
@@ -236,7 +263,7 @@ export function AttendanceKiosk() {
           confidence: 0,
           name: null,
           reason: isQuotaError 
-            ? "API Quota exceeded. Resting for 2 minutes."
+            ? "Free AI Daily limit reached. You can try again manually or wait for the system to resume."
             : (error instanceof Error ? error.message : "System Error")
         });
         toast.error(isQuotaError ? "Quota Exceeded" : "Error");
@@ -256,6 +283,7 @@ export function AttendanceKiosk() {
   };
 
   const toggleCamera = () => {
+    setCameraReady(false);
     setFacingMode(prev => prev === 'user' ? 'environment' : 'user');
   };
 
@@ -277,12 +305,52 @@ export function AttendanceKiosk() {
               className="absolute left-[10%] right-[10%] h-[2px] bg-natural-accent shadow-[0_0_15px_var(--color-natural-accent)] z-10 opacity-50" 
             />
             
-            <div className="w-[90%] md:w-[85%] h-[80%] md:h-auto md:aspect-[3/4] border-4 border-white/50 rounded-[40px] md:rounded-[120px_120px_100px_100px] relative overflow-hidden bg-black/40 shadow-inner">
+            <div className="w-[90%] md:w-[85%] h-[80%] md:h-auto md:aspect-[3/4] border-4 border-white/50 rounded-[40px] md:rounded-[120px_120px_100px_100px] relative overflow-hidden bg-black shadow-inner">
+                {!cameraReady && !cameraError && (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center text-white/40 gap-3">
+                    <Loader2 className="animate-spin" size={32} />
+                    <span className="text-[10px] font-black uppercase tracking-widest">Waking Sensor...</span>
+                  </div>
+                )}
+                {cameraError && (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center text-white p-6 text-center gap-4 bg-red-950/60 backdrop-blur-xl z-30">
+                    <div className="p-3 bg-red-500/20 rounded-full">
+                      <ShieldAlert className="text-red-400" size={40} />
+                    </div>
+                    <div className="space-y-2">
+                      <span className="text-lg font-black uppercase tracking-tighter block text-red-100">Camera Blocked</span>
+                      {cameraError.toLowerCase().includes("denied") || cameraError.toLowerCase().includes("permission") ? (
+                        <div className="space-y-3">
+                          <p className="text-xs text-white/80 font-bold leading-relaxed max-w-[240px]">
+                            Access to your camera was denied. This is usually due to browser security settings.
+                          </p>
+                          <div className="bg-black/40 p-3 rounded-xl text-[10px] text-left border border-white/10 space-y-2">
+                            <p className="font-black text-red-300 uppercase underline">How to Fix:</p>
+                            <p>1. Look for the <span className="font-bold underline">Lock Icon</span> 🔒 in the address bar.</p>
+                            <p>2. Toggle <span className="font-bold underline">Camera</span> to <span className="font-bold text-green-400">ON/Allow</span>.</p>
+                            <p>3. Tap the "Refresh" button below.</p>
+                          </div>
+                        </div>
+                      ) : (
+                        <p className="text-xs text-white/80 font-medium max-w-[200px]">
+                          {cameraError}. Please ensure no other application is using your camera.
+                        </p>
+                      )}
+                    </div>
+                    <Button 
+                      size="lg" 
+                      className="mt-2 bg-white text-red-950 hover:bg-white/90 rounded-2xl h-14 w-full max-w-[200px] text-sm uppercase font-black shadow-xl" 
+                      onClick={() => window.location.reload()}
+                    >
+                      Refresh & Try Again
+                    </Button>
+                  </div>
+                )}
                 <Webcam
                   audio={false}
                   ref={webcamRef}
                   screenshotFormat="image/jpeg"
-                  className="w-full h-full object-cover"
+                  className={`w-full h-full object-cover transition-opacity duration-500 ${cameraReady ? 'opacity-100' : 'opacity-0'}`}
                   videoConstraints={{ 
                     facingMode,
                     width: { ideal: 1280 },
@@ -293,8 +361,15 @@ export function AttendanceKiosk() {
                   imageSmoothing={true}
                   disablePictureInPicture={true}
                   forceScreenshotSourceSize={false}
-                  onUserMedia={() => {}}
-                  onUserMediaError={() => {}}
+                  onUserMedia={() => {
+                    setCameraReady(true);
+                    setCameraError(null);
+                  }}
+                  onUserMediaError={(err) => {
+                    console.error("Webcam Error:", err);
+                    setCameraError("Camera Access Denied or Busy");
+                    setCameraReady(false);
+                  }}
                 />
             </div>
 
@@ -314,9 +389,20 @@ export function AttendanceKiosk() {
                 </span>
               </Button>
 
-              <div className={`px-3 md:px-4 py-1 md:py-1.5 rounded-full text-[8px] md:text-[10px] backdrop-blur-md font-black tracking-wider flex items-center gap-1.5 md:gap-2 border whitespace-nowrap shadow-sm ${quotaPaused ? 'bg-orange-600 text-white border-orange-400' : 'bg-black/40 text-white border-white/10'}`}>
-                {quotaPaused ? (
-                  <><XCircle size={10} className="animate-pulse" /> QUOTA ({quotaCountdown}s)</>
+              <div className={`px-3 md:px-4 py-1 md:py-1.5 rounded-full text-[8px] md:text-[10px] backdrop-blur-md font-black tracking-wider flex items-center gap-1.5 md:gap-2 border whitespace-nowrap shadow-sm group ${quotaPaused ? 'bg-orange-600 text-white border-orange-400' : isOffline ? 'bg-red-600 text-white border-red-400' : 'bg-black/40 text-white border-white/10'}`}>
+                {isOffline ? (
+                   <><WifiOff size={10} className="animate-pulse" /> NETWORK OFFLINE</>
+                ) : quotaPaused ? (
+                  <div className="flex items-center gap-2">
+                    <XCircle size={10} className="animate-pulse" /> 
+                    <span>QUOTA EXHAUSTED ({Math.floor(quotaCountdown / 60)}:{(quotaCountdown % 60).toString().padStart(2, '0')})</span>
+                    <button 
+                      onClick={() => setQuotaPaused(false)}
+                      className="ml-1 bg-white/20 hover:bg-white/40 px-1.5 py-0.5 rounded text-[7px] border border-white/30 transition-colors uppercase"
+                    >
+                      Retry Now
+                    </button>
+                  </div>
                 ) : !isAutoScanEnabled ? (
                   <><XCircle size={10} className="text-gray-400" /> DISABLED</>
                 ) : isAutoScanning ? (
@@ -350,8 +436,8 @@ export function AttendanceKiosk() {
             <div className="absolute bottom-4 left-0 right-0 px-4 md:px-6 flex flex-col items-center gap-3 md:gap-4">
               <Button 
                  onClick={() => handleCapture(false)} 
-                 disabled={loading || verifying}
-                 className="w-full h-14 md:h-16 rounded-2xl md:rounded-[28px] bg-gradient-to-r from-natural-accent to-orange-500 hover:from-natural-accent/90 hover:to-orange-600 text-white font-black text-lg md:text-xl shadow-[0_10px_20px_rgba(244,63,94,0.3)] transition-all active:scale-[0.98] border md:border-2 border-white/30"
+                 disabled={loading || verifying || !cameraReady}
+                 className="w-full h-14 md:h-16 rounded-2xl md:rounded-[28px] bg-gradient-to-r from-natural-accent to-orange-500 hover:from-natural-accent/90 hover:to-orange-600 text-white font-black text-lg md:text-xl shadow-[0_10px_20px_rgba(244,63,94,0.3)] transition-all active:scale-[0.98] border md:border-2 border-white/30 disabled:opacity-50 disabled:grayscale"
               >
                 {verifying ? (
                   <><Loader2 size={24} className="mr-2 md:mr-3 animate-spin" /> ANALYZING...</>

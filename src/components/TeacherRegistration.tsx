@@ -6,7 +6,7 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import Webcam from 'react-webcam';
 import { motion, AnimatePresence } from 'motion/react';
-import { Camera, Upload, UserPlus, CheckCircle2, XCircle, Loader2, Users, FileText, Plus, Trash2, Edit2, Save, X, Settings, Shield, Sliders, Lock, KeyRound } from 'lucide-react';
+import { Camera, Upload, UserPlus, CheckCircle2, XCircle, Loader2, Users, FileText, Plus, Trash2, Edit2, Save, X, Settings, Shield, Sliders, Lock, KeyRound, WifiOff, ShieldAlert } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -68,12 +68,26 @@ export function TeacherRegistration() {
   const [isCapturingEdit, setIsCapturingEdit] = useState(false);
   const [updating, setUpdating] = useState(false);
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
+  const [cameraReady, setCameraReady] = useState(false);
+  const [cameraError, setCameraError] = useState<string | null>(null);
+  const [isOffline, setIsOffline] = useState(false);
   
   const webcamRef = useRef<Webcam>(null);
 
   useEffect(() => {
     fetchTeachers();
     fetchSettings();
+
+    // Monitor online/offline status
+    const handleOnline = () => setIsOffline(false);
+    const handleOffline = () => setIsOffline(true);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
   }, []);
 
   const fetchSettings = async () => {
@@ -717,16 +731,49 @@ export function TeacherRegistration() {
             
             <div className="relative aspect-[3/4] rounded-[32px] overflow-hidden bg-[#e8e4db] border-[6px] border-white shadow-xl flex items-center justify-center">
               {isCapturing ? (
-                <div className="relative w-full h-full">
+                <div className="relative w-full h-full bg-black">
+                  {!cameraReady && !cameraError && (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center text-white/40 gap-3">
+                      <Loader2 className="animate-spin" size={32} />
+                      <span className="text-[10px] font-black uppercase tracking-widest">Waking Sensor...</span>
+                    </div>
+                  )}
+                  {cameraError && (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center text-white p-6 text-center gap-4 bg-red-950/60 backdrop-blur-xl z-20">
+                      <div className="p-3 bg-red-500/20 rounded-full">
+                        <ShieldAlert className="text-red-400" size={32} />
+                      </div>
+                      <div className="space-y-1">
+                        <span className="text-sm font-black uppercase tracking-tight block">Camera Blocked</span>
+                        <p className="text-[10px] text-white/70 font-medium leading-tight max-w-[200px] mx-auto">
+                          Please grant camera permission in your browser or ensure no other app is using it.
+                        </p>
+                      </div>
+                      <Button size="sm" className="mt-2 bg-white text-red-950 hover:bg-white/90 rounded-xl h-10 px-6 text-[10px] uppercase font-black" onClick={() => {
+                        setCameraError(null);
+                        setCameraReady(false);
+                        setIsCapturing(false);
+                      }}>
+                        Go Back
+                      </Button>
+                    </div>
+                  )}
                   <Webcam
                     audio={false}
                     ref={webcamRef}
                     screenshotFormat="image/jpeg"
                     videoConstraints={{ facingMode }}
-                    className="w-full h-full object-cover"
+                    className={`w-full h-full object-cover transition-opacity duration-500 ${cameraReady ? 'opacity-100' : 'opacity-0'}`}
                     mirrored={facingMode === 'user'}
-                    onUserMedia={() => {}}
-                    onUserMediaError={() => {}}
+                    onUserMedia={() => {
+                      setCameraReady(true);
+                      setCameraError(null);
+                    }}
+                    onUserMediaError={(err) => {
+                      console.error("Webcam Error:", err);
+                      setCameraError("Camera Access Denied or Busy");
+                      setCameraReady(false);
+                    }}
                     onResize={() => {}}
                     imageSmoothing={true}
                     forceScreenshotSourceSize={false}
@@ -893,20 +940,36 @@ export function TeacherRegistration() {
                   <div className="relative group">
                     <div className="w-32 h-32 rounded-2xl overflow-hidden shadow-lg border-4 border-white">
                       {isCapturingEdit ? (
-                        <Webcam
-                          audio={false}
-                          ref={webcamRef}
-                          screenshotFormat="image/jpeg"
-                          videoConstraints={{ facingMode }}
-                          className="w-full h-full object-cover"
-                          mirrored={facingMode === 'user'}
-                          onUserMedia={() => {}}
-                          onUserMediaError={() => {}}
-                          imageSmoothing={true}
-                          forceScreenshotSourceSize={false}
-                          disablePictureInPicture={true}
-                          screenshotQuality={0.9}
-                        />
+                        <div className="relative w-full h-full bg-black">
+                          {!cameraReady && !cameraError && (
+                            <div className="absolute inset-0 flex flex-col items-center justify-center text-white/40">
+                              <Loader2 className="animate-spin" size={20} />
+                            </div>
+                          )}
+                          <Webcam
+                            audio={false}
+                            ref={webcamRef}
+                            screenshotFormat="image/jpeg"
+                            videoConstraints={{ facingMode }}
+                            className={`w-full h-full object-cover transition-opacity duration-300 ${cameraReady ? 'opacity-100' : 'opacity-0'}`}
+                            mirrored={facingMode === 'user'}
+                            onUserMedia={() => {
+                              setCameraReady(true);
+                              setCameraError(null);
+                            }}
+                            onUserMediaError={(err) => {
+                              console.error("Webcam Error:", err);
+                              setCameraError("Camera Access Denied or Busy");
+                              setCameraReady(false);
+                              setIsCapturingEdit(false);
+                              toast.error("Camera access denied");
+                            }}
+                            imageSmoothing={true}
+                            forceScreenshotSourceSize={false}
+                            disablePictureInPicture={true}
+                            screenshotQuality={0.9}
+                          />
+                        </div>
                       ) : (
                         <img src={editPhoto || ''} className="w-full h-full object-cover" />
                       )}

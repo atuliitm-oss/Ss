@@ -9,11 +9,136 @@ import { TeacherRegistration } from './components/TeacherRegistration';
 import { AttendanceKiosk } from './components/AttendanceKiosk';
 import { AttendanceReport } from './components/AttendanceReport';
 import { Toaster } from "@/components/ui/sonner";
-import { UserCheck, Settings, BarChart3, School } from 'lucide-react';
+import { UserCheck, Settings, BarChart3, School, WifiOff, Globe, AlertCircle, RefreshCw, KeyRound, Lock, ArrowRight, Loader2 } from 'lucide-react';
+import { db } from './lib/firebase';
+import { doc, getDoc, setDoc, getDocFromServer } from 'firebase/firestore';
+import { motion, AnimatePresence } from 'motion/react';
+import { toast } from 'sonner';
 
 export default function App() {
+  const [activeTab, setActiveTab] = React.useState('attendance');
+  const [isOnline, setIsOnline] = React.useState(window.navigator.onLine);
+  const [firestoreStatus, setFirestoreStatus] = React.useState<'checking' | 'connected' | 'disconnected'>('checking');
+  
+  // Authentication state for restricted tabs
+  const [isAdminAuthenticated, setIsAdminAuthenticated] = React.useState(false);
+  const [pin, setPin] = React.useState('');
+  const [systemPin, setSystemPin] = React.useState<string | null>(null);
+  const [isPinSetupLoading, setIsPinSetupLoading] = React.useState(true);
+  const [newPin, setNewPin] = React.useState('');
+  const [confirmPin, setConfirmPin] = React.useState('');
+
+  const handlePinSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (pin === systemPin) {
+      setIsAdminAuthenticated(true);
+      toast.success('Access Granted');
+    } else {
+      toast.error('Incorrect PIN');
+      setPin('');
+    }
+  };
+
+  const handleCreatePin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (newPin.length < 4) {
+      toast.error('PIN should be at least 4 digits');
+      return;
+    }
+    if (newPin !== confirmPin) {
+      toast.error('PINs do not match');
+      return;
+    }
+
+    try {
+      await setDoc(doc(db, 'settings', 'admin'), {
+        pin: newPin,
+        setupAt: new Date().toISOString()
+      });
+      setSystemPin(newPin);
+      setIsAdminAuthenticated(true);
+      toast.success('Admin PIN Setup Complete');
+    } catch (error: any) {
+      toast.error('Failed to save PIN: ' + error.message);
+    }
+  };
+
+  React.useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    const checkFirestore = async () => {
+      try {
+        // Try a fast server fetch to verify reachability
+        await getDocFromServer(doc(db, '_health_check', 'connection'));
+        setFirestoreStatus('connected');
+      } catch (error: any) {
+        console.warn("Firestore reachability check failed:", error.message);
+        setFirestoreStatus('disconnected');
+      }
+    };
+
+    const fetchSystemPin = async () => {
+      try {
+        const docSnap = await getDoc(doc(db, 'settings', 'admin'));
+        if (docSnap.exists()) {
+          setSystemPin(docSnap.data().pin);
+        } else {
+          setSystemPin(null);
+        }
+      } catch (error) {
+        console.error("Error fetching PIN setup:", error);
+      } finally {
+        setIsPinSetupLoading(false);
+      }
+    };
+
+    checkFirestore();
+    fetchSystemPin();
+    const interval = setInterval(checkFirestore, 60000); // Check every minute
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+      clearInterval(interval);
+    };
+  }, []);
+
   return (
     <div className="min-h-screen bg-natural-bg font-sans text-natural-text selection:bg-natural-accent/10 selection:text-natural-primary relative overflow-hidden">
+      {/* Connection Status Banners */}
+      <AnimatePresence>
+        {!isOnline && (
+          <motion.div 
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className="bg-red-600 text-white text-[10px] md:text-sm font-black uppercase tracking-[0.2em] py-2 px-4 flex items-center justify-center gap-3 sticky top-0 z-[60] shadow-lg"
+          >
+            <WifiOff size={16} className="animate-bounce" />
+            No Internet Connection. The app is running in offline mode.
+          </motion.div>
+        )}
+        {isOnline && firestoreStatus === 'disconnected' && (
+          <motion.div 
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className="bg-amber-500 text-white text-[10px] md:text-xs font-black uppercase tracking-[0.1em] py-2 px-4 flex items-center justify-center gap-3 sticky top-0 z-[60] shadow-lg text-center"
+          >
+            <AlertCircle size={14} className="flex-shrink-0" />
+            <span>Database unreachable. Attendance records will be synced when connection is restored.</span>
+            <button 
+              onClick={() => window.location.reload()}
+              className="ml-2 bg-white/20 hover:bg-white/40 px-2 py-1 rounded border border-white/30 transition-all flex items-center gap-1"
+            >
+              <RefreshCw size={10} /> Retry
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
       {/* Decorative colorful blobs */}
       <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-natural-primary/5 rounded-full blur-[120px] pointer-events-none" />
       <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-natural-accent/5 rounded-full blur-[120px] pointer-events-none" />
@@ -49,7 +174,7 @@ export default function App() {
       </header>
 
       <main className="max-w-7xl mx-auto px-4 md:px-10 py-6 md:py-8">
-        <Tabs defaultValue="attendance" className="space-y-6 md:space-y-10">
+        <Tabs defaultValue="attendance" onValueChange={setActiveTab} className="space-y-6 md:space-y-10">
           <div className="flex justify-center relative z-10">
             <TabsList className="bg-white/70 backdrop-blur-md p-1.5 md:p-2 h-14 md:h-20 rounded-2xl md:rounded-[28px] border border-black/[0.08] shadow-2xl w-full max-w-lg">
               <TabsTrigger 
@@ -74,15 +199,168 @@ export default function App() {
           </div>
 
           <TabsContent value="attendance" className="outline-none">
-            <AttendanceKiosk />
+            {activeTab === 'attendance' && <AttendanceKiosk />}
           </TabsContent>
           
           <TabsContent value="admin" className="outline-none">
-            <TeacherRegistration />
+            {activeTab === 'admin' && (
+              isPinSetupLoading ? (
+                <div className="flex items-center justify-center py-20">
+                  <Loader2 className="animate-spin text-natural-primary" size={32} />
+                </div>
+              ) : systemPin === null ? (
+                // First-time setup UI
+                <div className="flex items-center justify-center py-20 px-4">
+                  <motion.div 
+                    initial={{ opacity: 0, scale: 0.95 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    className="w-full max-w-sm bg-white p-8 rounded-[32px] border-2 border-orange-500/20 shadow-2xl relative overflow-hidden"
+                  >
+                    <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-orange-500 to-rose-600" />
+                    <div className="flex flex-col items-center gap-6 text-center">
+                      <div className="w-16 h-16 bg-orange-100 rounded-2xl flex items-center justify-center text-orange-600 ring-4 ring-orange-100 shadow-inner">
+                        <KeyRound size={32} />
+                      </div>
+                      <div className="space-y-2">
+                        <h2 className="text-xl font-black uppercase tracking-tight text-natural-primary">Initial App Setup</h2>
+                        <p className="text-[10px] uppercase font-bold text-natural-primary/40 tracking-wider">Create a unique Administrative PIN to secure your data</p>
+                      </div>
+                      <form onSubmit={handleCreatePin} className="w-full space-y-4">
+                        <div className="space-y-4">
+                          <input 
+                            type="password" 
+                            value={newPin}
+                            onChange={(e) => setNewPin(e.target.value)}
+                            placeholder="NEW 4-DIGIT PIN"
+                            maxLength={8}
+                            className="w-full h-14 bg-natural-bg/50 border-2 border-black/5 rounded-2xl px-6 text-center text-lg font-black tracking-[0.2em] outline-none focus:border-orange-500 focus:ring-4 focus:ring-orange-500/10 transition-all"
+                            autoFocus
+                          />
+                          <input 
+                            type="password" 
+                            value={confirmPin}
+                            onChange={(e) => setConfirmPin(e.target.value)}
+                            placeholder="CONFIRM PIN"
+                            maxLength={8}
+                            className="w-full h-14 bg-natural-bg/50 border-2 border-black/5 rounded-2xl px-6 text-center text-lg font-black tracking-[0.2em] outline-none focus:border-orange-500 focus:ring-4 focus:ring-orange-500/10 transition-all"
+                          />
+                        </div>
+                        <button 
+                          type="submit"
+                          className="w-full h-14 bg-orange-600 text-white font-black uppercase tracking-widest rounded-2xl shadow-lg hover:shadow-orange-500/30 hover:scale-[1.02] active:scale-[0.98] transition-all flex items-center justify-center gap-2 group"
+                        >
+                          Save & Continue <ArrowRight size={18} className="group-hover:translate-x-1 transition-transform" />
+                        </button>
+                      </form>
+                    </div>
+                  </motion.div>
+                </div>
+              ) : !isAdminAuthenticated ? (
+                <div className="flex items-center justify-center py-20 px-4">
+                  <motion.div 
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="w-full max-w-sm bg-white p-8 rounded-[32px] border border-black/5 shadow-2xl relative overflow-hidden"
+                  >
+                    <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-orange-500 to-rose-600" />
+                    <div className="flex flex-col items-center gap-6 text-center">
+                      <div className="w-16 h-16 bg-orange-100 rounded-2xl flex items-center justify-center text-orange-600">
+                        <Lock size={32} />
+                      </div>
+                      <div className="space-y-2">
+                        <h2 className="text-xl font-black uppercase tracking-tight text-natural-primary">Admin Access Only</h2>
+                        <p className="text-[10px] uppercase font-bold text-natural-primary/40 tracking-wider">Please enter the security PIN to continue</p>
+                      </div>
+                      <form onSubmit={handlePinSubmit} className="w-full space-y-4">
+                        <div className="relative">
+                          <input 
+                            type="password" 
+                            value={pin}
+                            onChange={(e) => setPin(e.target.value)}
+                            placeholder="ENTER PIN"
+                            className="w-full h-14 bg-natural-bg/50 border-2 border-black/5 rounded-2xl px-6 text-center text-xl font-black tracking-[0.3em] outline-none focus:border-orange-500 focus:ring-4 focus:ring-orange-500/10 transition-all placeholder:text-natural-primary/10"
+                            autoFocus
+                          />
+                        </div>
+                        <button 
+                          type="submit"
+                          className="w-full h-14 bg-natural-primary text-white font-black uppercase tracking-widest rounded-2xl shadow-lg hover:shadow-xl active:scale-[0.98] transition-all flex items-center justify-center gap-2 group"
+                        >
+                          Unlock Section <ArrowRight size={18} className="group-hover:translate-x-1 transition-transform" />
+                        </button>
+                      </form>
+                      <button 
+                         onClick={() => setActiveTab('attendance')}
+                         className="text-[10px] font-black uppercase text-natural-primary/30 hover:text-natural-primary/60 transition-colors"
+                      >
+                         Cancel & Return Home
+                      </button>
+                    </div>
+                  </motion.div>
+                </div>
+              ) : (
+                <TeacherRegistration />
+              )
+            )}
           </TabsContent>
 
           <TabsContent value="report" className="outline-none">
-            <AttendanceReport />
+            {activeTab === 'report' && (
+              isPinSetupLoading ? (
+                <div className="flex items-center justify-center py-20">
+                  <Loader2 className="animate-spin text-natural-primary" size={32} />
+                </div>
+              ) : systemPin === null ? (
+                // Setup required
+                <div className="flex items-center justify-center py-20 px-4">
+                   <p className="text-sm font-black uppercase text-orange-600 bg-orange-100 px-6 py-3 rounded-2xl border border-orange-200">Please setup Admin PIN in "Register" tab first</p>
+                </div>
+              ) : !isAdminAuthenticated ? (
+                <div className="flex items-center justify-center py-20 px-4">
+                  <motion.div 
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="w-full max-w-sm bg-white p-8 rounded-[32px] border border-black/5 shadow-2xl relative overflow-hidden"
+                  >
+                    <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-emerald-500 to-teal-600" />
+                    <div className="flex flex-col items-center gap-6 text-center">
+                      <div className="w-16 h-16 bg-emerald-100 rounded-2xl flex items-center justify-center text-emerald-600">
+                        <BarChart3 size={32} />
+                      </div>
+                      <div className="space-y-2">
+                        <h2 className="text-xl font-black uppercase tracking-tight text-natural-primary">Restricted Reports</h2>
+                        <p className="text-[10px] uppercase font-bold text-natural-primary/40 tracking-wider">Authentication required for data access</p>
+                      </div>
+                      <form onSubmit={handlePinSubmit} className="w-full space-y-4">
+                        <div className="relative">
+                          <input 
+                            type="password" 
+                            value={pin}
+                            onChange={(e) => setPin(e.target.value)}
+                            placeholder="ENTER PIN"
+                            className="w-full h-14 bg-natural-bg/50 border-2 border-black/5 rounded-2xl px-6 text-center text-xl font-black tracking-[0.3em] outline-none focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10 transition-all placeholder:text-natural-primary/10"
+                          />
+                        </div>
+                        <button 
+                          type="submit"
+                          className="w-full h-14 bg-natural-primary text-white font-black uppercase tracking-widest rounded-2xl shadow-lg hover:shadow-xl active:scale-[0.98] transition-all flex items-center justify-center gap-2 group"
+                        >
+                          Verify PIN <ArrowRight size={18} className="group-hover:translate-x-1 transition-transform" />
+                        </button>
+                      </form>
+                      <button 
+                        onClick={() => setActiveTab('attendance')}
+                        className="text-[10px] font-black uppercase text-natural-primary/30 hover:text-natural-primary/60 transition-colors"
+                      >
+                         Cancel & Return Home
+                      </button>
+                    </div>
+                  </motion.div>
+                </div>
+              ) : (
+                <AttendanceReport />
+              )
+            )}
           </TabsContent>
         </Tabs>
       </main>
