@@ -42,6 +42,8 @@ export function AttendanceKiosk() {
   const [quotaPaused, setQuotaPaused] = useState(false);
   const [quotaCountdown, setQuotaCountdown] = useState(0);
   const [isOffline, setIsOffline] = useState(false);
+  const [isNotHttps, setIsNotHttps] = useState(false);
+  const [permissionState, setPermissionState] = useState<PermissionState | null>(null);
 
   const webcamRef = useRef<Webcam>(null);
   const scanTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -50,6 +52,21 @@ export function AttendanceKiosk() {
   useEffect(() => {
     fetchTeachers();
     fetchSettings();
+
+    // Check for HTTPS
+    if (window.location.protocol !== 'https:' && window.location.hostname !== 'localhost') {
+      setIsNotHttps(true);
+    }
+
+    // Check camera permission state if API is available
+    if (navigator.permissions && navigator.permissions.query) {
+      navigator.permissions.query({ name: 'camera' as any })
+        .then((result) => {
+          setPermissionState(result.state);
+          result.onchange = () => setPermissionState(result.state);
+        })
+        .catch(err => console.warn("Permission query failed:", err));
+    }
 
     // Monitor online/offline status
     const handleOnline = () => setIsOffline(false);
@@ -201,21 +218,48 @@ export function AttendanceKiosk() {
 
       if (matchResult.isMatch && matchResult.matchedId) {
         // Success!
-        const teacher = teachers.find(t => t.id === matchResult.matchedId);
+        const teacher = teachers.find(t => (t.firebaseId || t.dbId || t.id) === matchResult.matchedId);
+        const teacherDocId = teacher?.firebaseId || teacher?.dbId || '';
+        const customEmpId = teacher?.id || matchResult.matchedId;
         
         const logQuality = Math.max(0.2, aiSettings.compressionQuality * 0.8);
         const compressedPhoto = await compressImage(imageSrc, 400, 400, logQuality);
 
         const today = new Date().toLocaleDateString('en-CA');
+        let alreadyMarked = false;
+
+        // 1. Primary check by unique document ID
         const existingQuery = query(
           collection(db, path),
-          where("teacherId", "==", matchResult.matchedId),
+          where("teacherDocId", "==", teacherDocId),
           where("date", "==", today)
         );
-        
         const existingDocs = await getDocs(existingQuery);
         
         if (!existingDocs.empty) {
+          alreadyMarked = true;
+        } else {
+          // 2. Backward compatibility fallback: check by custom ID but verify detail match
+          const fallbackQuery = query(
+            collection(db, path),
+            where("teacherId", "==", customEmpId),
+            where("date", "==", today)
+          );
+          const fallbackDocs = await getDocs(fallbackQuery);
+          if (!fallbackDocs.empty) {
+            // Check if the log was registered to this specific teacher
+            const matchesCurrentTeacher = fallbackDocs.docs.some(docSnap => {
+              const d = docSnap.data();
+              return d.teacherDocId === teacherDocId || 
+                     (!d.teacherDocId && d.teacherName === (matchResult.name || teacher?.name));
+            });
+            if (matchesCurrentTeacher) {
+              alreadyMarked = true;
+            }
+          }
+        }
+        
+        if (alreadyMarked) {
           setStep('result');
           setResult({
             ...matchResult,
@@ -228,7 +272,8 @@ export function AttendanceKiosk() {
         }
 
         await addDoc(collection(db, path), {
-          teacherId: matchResult.matchedId,
+          teacherDocId: teacherDocId,
+          teacherId: customEmpId,
           teacherName: matchResult.name || teacher?.name || 'Unknown',
           date: today,
           timestamp: serverTimestamp(),
@@ -318,32 +363,53 @@ export function AttendanceKiosk() {
                       <ShieldAlert className="text-red-400" size={40} />
                     </div>
                     <div className="space-y-2">
-                      <span className="text-lg font-black uppercase tracking-tighter block text-red-100">Camera Blocked</span>
-                      {cameraError.toLowerCase().includes("denied") || cameraError.toLowerCase().includes("permission") ? (
+                      <span className="text-lg font-black uppercase tracking-tighter block text-red-100">
+                        {isNotHttps ? 'Secure Connection Required' : permissionState === 'denied' ? 'Camera Denied' : 'Camera Blocked'}
+                      </span>
+                      {isNotHttps ? (
                         <div className="space-y-3">
                           <p className="text-xs text-white/80 font-bold leading-relaxed max-w-[240px]">
-                            Access to your camera was denied. This is usually due to browser security settings.
+                            Camera access requires a secure HTTPS connection.
                           </p>
                           <div className="bg-black/40 p-3 rounded-xl text-[10px] text-left border border-white/10 space-y-2">
-                            <p className="font-black text-red-300 uppercase underline">How to Fix:</p>
-                            <p>1. Look for the <span className="font-bold underline">Lock Icon</span> 🔒 in the address bar.</p>
-                            <p>2. Toggle <span className="font-bold underline">Camera</span> to <span className="font-bold text-green-400">ON/Allow</span>.</p>
-                            <p>3. Tap the "Refresh" button below.</p>
+                             <p>Please host your application with an SSL certificate or use the provided preview URL.</p>
+                          </div>
+                        </div>
+                      ) : cameraError?.toLowerCase().includes("denied") || cameraError?.toLowerCase().includes("permission") || permissionState === 'denied' ? (
+                        <div className="space-y-3">
+                          <p className="text-xs text-white/80 font-bold leading-relaxed max-w-[240px]">
+                            Access to your camera was denied by the browser.
+                          </p>
+                          <div className="bg-black/40 p-3 rounded-xl text-[10px] text-left border border-white/10 space-y-2">
+                            <p className="font-black text-red-300 uppercase underline">Troubleshooting:</p>
+                            <p>1. Tap the <span className="font-bold underline text-white">"Open in New Tab"</span> button below.</p>
+                            <p>2. Check for a <span className="font-bold underline text-white">blocked camera icon</span> 📵 in the address bar.</p>
+                            <p>3. Go to <span className="font-bold underline text-white">Browser Settings</span> → Site Settings → Camera and ensure it is <span className="font-bold text-green-400">Allowed</span>.</p>
                           </div>
                         </div>
                       ) : (
                         <p className="text-xs text-white/80 font-medium max-w-[200px]">
-                          {cameraError}. Please ensure no other application is using your camera.
+                          {cameraError || 'Please ensure no other application is using your camera.'}
                         </p>
                       )}
                     </div>
-                    <Button 
-                      size="lg" 
-                      className="mt-2 bg-white text-red-950 hover:bg-white/90 rounded-2xl h-14 w-full max-w-[200px] text-sm uppercase font-black shadow-xl" 
-                      onClick={() => window.location.reload()}
-                    >
-                      Refresh & Try Again
-                    </Button>
+                    <div className="flex flex-col gap-2 w-full max-w-[200px]">
+                      <Button 
+                        size="lg" 
+                        className="bg-white text-red-950 hover:bg-white/90 rounded-2xl h-12 w-full text-sm uppercase font-black shadow-xl" 
+                        onClick={() => window.location.reload()}
+                      >
+                        Refresh
+                      </Button>
+                      <Button 
+                        size="sm" 
+                        variant="secondary"
+                        className="bg-black/40 text-white border border-white/20 hover:bg-black/60 rounded-xl h-10 w-full text-[10px] uppercase font-black" 
+                        onClick={() => window.open(window.location.href, '_blank')}
+                      >
+                        Open in New Tab ↗
+                      </Button>
+                    </div>
                   </div>
                 )}
                 <Webcam

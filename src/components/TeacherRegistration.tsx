@@ -745,17 +745,35 @@ export function TeacherRegistration() {
                       </div>
                       <div className="space-y-1">
                         <span className="text-sm font-black uppercase tracking-tight block">Camera Blocked</span>
-                        <p className="text-[10px] text-white/70 font-medium leading-tight max-w-[200px] mx-auto">
-                          Please grant camera permission in your browser or ensure no other app is using it.
-                        </p>
+                        <div className="space-y-3">
+                          <p className="text-[10px] text-white/80 font-bold leading-tight max-w-[200px] mx-auto">
+                            Access to your camera was denied. This is usually due to browser security settings or being inside a restricted frame.
+                          </p>
+                          <div className="bg-black/40 p-3 rounded-xl text-[9px] text-left border border-white/10 space-y-2">
+                            <p className="font-black text-red-300 uppercase underline">Troubleshooting:</p>
+                            <p>1. Tap the <span className="font-bold underline text-white">"Open in New Tab"</span> button below.</p>
+                            <p>2. Check for a <span className="font-bold underline text-white">blocked camera icon</span> 📵 in the address bar.</p>
+                            <p>3. Go to <span className="font-bold underline text-white">Browser Settings</span> → Site Settings → Camera and ensure it is <span className="font-bold text-green-400">Allowed</span>.</p>
+                          </div>
+                        </div>
                       </div>
-                      <Button size="sm" className="mt-2 bg-white text-red-950 hover:bg-white/90 rounded-xl h-10 px-6 text-[10px] uppercase font-black" onClick={() => {
-                        setCameraError(null);
-                        setCameraReady(false);
-                        setIsCapturing(false);
-                      }}>
-                        Go Back
-                      </Button>
+                      <div className="flex flex-col gap-2 w-full max-w-[180px]">
+                        <Button 
+                          size="sm" 
+                          className="bg-white text-red-950 hover:bg-white/90 rounded-xl h-10 w-full text-[10px] uppercase font-black" 
+                          onClick={() => window.location.reload()}
+                        >
+                          Refresh
+                        </Button>
+                        <Button 
+                          size="sm" 
+                          variant="secondary"
+                          className="bg-black/40 text-white border border-white/20 hover:bg-black/60 rounded-xl h-10 w-full text-[10px] uppercase font-black" 
+                          onClick={() => window.open(window.location.href, '_blank')}
+                        >
+                          Open in New Tab ↗
+                        </Button>
+                      </div>
                     </div>
                   )}
                   <Webcam

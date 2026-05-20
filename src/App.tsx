@@ -9,7 +9,7 @@ import { TeacherRegistration } from './components/TeacherRegistration';
 import { AttendanceKiosk } from './components/AttendanceKiosk';
 import { AttendanceReport } from './components/AttendanceReport';
 import { Toaster } from "@/components/ui/sonner";
-import { UserCheck, Settings, BarChart3, School, WifiOff, Globe, AlertCircle, RefreshCw, KeyRound, Lock, ArrowRight, Loader2 } from 'lucide-react';
+import { UserCheck, Settings, BarChart3, School, WifiOff, Globe, AlertCircle, RefreshCw, KeyRound, Lock, ArrowRight, Loader2, ShieldAlert } from 'lucide-react';
 import { db } from './lib/firebase';
 import { doc, getDoc, setDoc, getDocFromServer } from 'firebase/firestore';
 import { motion, AnimatePresence } from 'motion/react';
@@ -18,6 +18,7 @@ import { toast } from 'sonner';
 export default function App() {
   const [activeTab, setActiveTab] = React.useState('attendance');
   const [isOnline, setIsOnline] = React.useState(window.navigator.onLine);
+  const [isNotHttps, setIsNotHttps] = React.useState(false);
   const [firestoreStatus, setFirestoreStatus] = React.useState<'checking' | 'connected' | 'disconnected'>('checking');
   
   // Authentication state for restricted tabs
@@ -64,6 +65,11 @@ export default function App() {
   };
 
   React.useEffect(() => {
+    // Check for HTTPS (necessary for camera)
+    if (window.location.protocol !== 'https:' && window.location.hostname !== 'localhost') {
+      setIsNotHttps(true);
+    }
+    
     const handleOnline = () => setIsOnline(true);
     const handleOffline = () => setIsOnline(false);
     window.addEventListener('online', handleOnline);
@@ -136,6 +142,16 @@ export default function App() {
             >
               <RefreshCw size={10} /> Retry
             </button>
+          </motion.div>
+        )}
+        {isNotHttps && (
+          <motion.div 
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            className="bg-red-950 text-white text-[10px] md:text-xs font-black uppercase tracking-[0.1em] py-2 px-4 flex items-center justify-center gap-3 sticky top-0 z-[60] shadow-lg text-center"
+          >
+            <ShieldAlert size={14} className="text-red-500" />
+            <span>CRITICAL: CAMERA REQUIRES HTTPS. Your connection is NOT secure.</span>
           </motion.div>
         )}
       </AnimatePresence>
