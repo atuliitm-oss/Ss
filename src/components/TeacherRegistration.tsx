@@ -1219,7 +1219,7 @@ export function TeacherRegistration() {
                   ) : confirmDeleteId === teacher.dbId ? (
                     <span className="text-[8px] md:text-[10px] font-black text-white italic tracking-wider">DELETE?</span>
                   ) : (
-                    <Trash2 size={18} />
+                    <Trash2 size={18} className="text-black" />
                   )}
                 </Button>
             </div>

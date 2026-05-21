@@ -44,6 +44,7 @@ export function AttendanceKiosk() {
   const [isOffline, setIsOffline] = useState(false);
   const [isNotHttps, setIsNotHttps] = useState(false);
   const [permissionState, setPermissionState] = useState<PermissionState | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
 
   const webcamRef = useRef<Webcam>(null);
   const scanTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -163,33 +164,7 @@ export function AttendanceKiosk() {
     }
   };
 
-  const handleCapture = async (isAuto = false) => {
-    if (verifying) return;
-    
-    if (!webcamRef.current) {
-      if (!isAuto) toast.error("Camera system not initialized");
-      return;
-    }
-
-    if (!cameraReady && !isAuto) {
-      toast.error("Please wait for camera to initialize");
-      return;
-    }
-
-    let imageSrc = webcamRef.current.getScreenshot();
-    
-    // Retry once after a short delay if it's null or empty (common when camera just started)
-    if (!imageSrc || imageSrc === 'data:,' || imageSrc.length < 100) {
-      await new Promise(resolve => setTimeout(resolve, 500));
-      imageSrc = webcamRef.current.getScreenshot();
-    }
-    
-    if (!imageSrc || imageSrc === 'data:,' || imageSrc.length < 100) {
-      console.warn("Capture failed after retry. Length:", imageSrc?.length);
-      if (!isAuto) toast.error("Failed to capture a clear photo. Please ensure camera permission is granted and visible.");
-      return;
-    }
-
+  const processImageAndVerify = async (imageSrc: string, isAuto = false) => {
     if (teachers.length === 0) {
       if (!isAuto) toast.error("No teachers registered in system");
       return;
@@ -218,48 +193,21 @@ export function AttendanceKiosk() {
 
       if (matchResult.isMatch && matchResult.matchedId) {
         // Success!
-        const teacher = teachers.find(t => (t.firebaseId || t.dbId || t.id) === matchResult.matchedId);
-        const teacherDocId = teacher?.firebaseId || teacher?.dbId || '';
-        const customEmpId = teacher?.id || matchResult.matchedId;
+        const teacher = teachers.find(t => t.id === matchResult.matchedId);
         
         const logQuality = Math.max(0.2, aiSettings.compressionQuality * 0.8);
         const compressedPhoto = await compressImage(imageSrc, 400, 400, logQuality);
 
         const today = new Date().toLocaleDateString('en-CA');
-        let alreadyMarked = false;
-
-        // 1. Primary check by unique document ID
         const existingQuery = query(
           collection(db, path),
-          where("teacherDocId", "==", teacherDocId),
+          where("teacherId", "==", matchResult.matchedId),
           where("date", "==", today)
         );
+        
         const existingDocs = await getDocs(existingQuery);
         
         if (!existingDocs.empty) {
-          alreadyMarked = true;
-        } else {
-          // 2. Backward compatibility fallback: check by custom ID but verify detail match
-          const fallbackQuery = query(
-            collection(db, path),
-            where("teacherId", "==", customEmpId),
-            where("date", "==", today)
-          );
-          const fallbackDocs = await getDocs(fallbackQuery);
-          if (!fallbackDocs.empty) {
-            // Check if the log was registered to this specific teacher
-            const matchesCurrentTeacher = fallbackDocs.docs.some(docSnap => {
-              const d = docSnap.data();
-              return d.teacherDocId === teacherDocId || 
-                     (!d.teacherDocId && d.teacherName === (matchResult.name || teacher?.name));
-            });
-            if (matchesCurrentTeacher) {
-              alreadyMarked = true;
-            }
-          }
-        }
-        
-        if (alreadyMarked) {
           setStep('result');
           setResult({
             ...matchResult,
@@ -272,8 +220,7 @@ export function AttendanceKiosk() {
         }
 
         await addDoc(collection(db, path), {
-          teacherDocId: teacherDocId,
-          teacherId: customEmpId,
+          teacherId: matchResult.matchedId,
           teacherName: matchResult.name || teacher?.name || 'Unknown',
           date: today,
           timestamp: serverTimestamp(),
@@ -319,6 +266,80 @@ export function AttendanceKiosk() {
     }
   };
 
+  const handleCapture = async (isAuto = false) => {
+    if (verifying) return;
+    
+    if (!webcamRef.current) {
+      if (!isAuto) toast.error("Camera system not initialized");
+      return;
+    }
+
+    if (!cameraReady && !isAuto) {
+      toast.error("Please wait for camera to initialize");
+      return;
+    }
+
+    let imageSrc = webcamRef.current.getScreenshot();
+    
+    // Retry once after a short delay if it's null or empty (common when camera just started)
+    if (!imageSrc || imageSrc === 'data:,' || imageSrc.length < 100) {
+      await new Promise(resolve => setTimeout(resolve, 500));
+      imageSrc = webcamRef.current.getScreenshot();
+    }
+    
+    if (!imageSrc || imageSrc === 'data:,' || imageSrc.length < 100) {
+      console.warn("Capture failed after retry. Length:", imageSrc?.length);
+      if (!isAuto) toast.error("Failed to capture a clear photo. Please ensure camera permission is granted and visible.");
+      return;
+    }
+
+    await processImageAndVerify(imageSrc, isAuto);
+  };
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      processFile(file);
+    }
+  };
+
+  const processFile = (file: File) => {
+    if (!file.type.startsWith('image/')) {
+      toast.error("Please select a valid image file");
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = async () => {
+      const base64Image = reader.result as string;
+      if (base64Image) {
+        await processImageAndVerify(base64Image, false);
+      }
+    };
+    reader.onerror = () => {
+      toast.error("Failed to read image file");
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = () => {
+    setIsDragging(false);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) {
+      processFile(file);
+    }
+  };
+
   const reset = () => {
     setStep('capture');
     setCapturedPhoto(null);
@@ -358,45 +379,56 @@ export function AttendanceKiosk() {
                   </div>
                 )}
                 {cameraError && (
-                  <div className="absolute inset-0 flex flex-col items-center justify-center text-white p-6 text-center gap-4 bg-red-950/60 backdrop-blur-xl z-30">
-                    <div className="p-3 bg-red-500/20 rounded-full">
-                      <ShieldAlert className="text-red-400" size={40} />
+                  <div className="absolute inset-0 flex flex-col items-center justify-center text-white p-4 text-center gap-2 bg-red-950/80 backdrop-blur-xl z-30 overflow-y-auto">
+                    <div className="p-2 bg-red-500/20 rounded-full shrink-0">
+                      <ShieldAlert className="text-red-400" size={32} />
                     </div>
-                    <div className="space-y-2">
-                      <span className="text-lg font-black uppercase tracking-tighter block text-red-100">
-                        {isNotHttps ? 'Secure Connection Required' : permissionState === 'denied' ? 'Camera Denied' : 'Camera Blocked'}
+                    <div className="space-y-1 shrink-0">
+                      <span className="text-sm font-black uppercase tracking-tighter block text-red-100">
+                        {isNotHttps ? 'Secure Connection Required' : cameraError?.toLowerCase().includes("denied") || cameraError?.toLowerCase().includes("permission") || permissionState === 'denied' ? 'Camera Denied' : 'Camera Blocked'}
                       </span>
-                      {isNotHttps ? (
-                        <div className="space-y-3">
-                          <p className="text-xs text-white/80 font-bold leading-relaxed max-w-[240px]">
-                            Camera access requires a secure HTTPS connection.
-                          </p>
-                          <div className="bg-black/40 p-3 rounded-xl text-[10px] text-left border border-white/10 space-y-2">
-                             <p>Please host your application with an SSL certificate or use the provided preview URL.</p>
-                          </div>
-                        </div>
-                      ) : cameraError?.toLowerCase().includes("denied") || cameraError?.toLowerCase().includes("permission") || permissionState === 'denied' ? (
-                        <div className="space-y-3">
-                          <p className="text-xs text-white/80 font-bold leading-relaxed max-w-[240px]">
-                            Access to your camera was denied by the browser.
-                          </p>
-                          <div className="bg-black/40 p-3 rounded-xl text-[10px] text-left border border-white/10 space-y-2">
-                            <p className="font-black text-red-300 uppercase underline">Troubleshooting:</p>
-                            <p>1. Tap the <span className="font-bold underline text-white">"Open in New Tab"</span> button below.</p>
-                            <p>2. Check for a <span className="font-bold underline text-white">blocked camera icon</span> 📵 in the address bar.</p>
-                            <p>3. Go to <span className="font-bold underline text-white">Browser Settings</span> → Site Settings → Camera and ensure it is <span className="font-bold text-green-400">Allowed</span>.</p>
-                          </div>
-                        </div>
-                      ) : (
-                        <p className="text-xs text-white/80 font-medium max-w-[200px]">
-                          {cameraError || 'Please ensure no other application is using your camera.'}
-                        </p>
-                      )}
+                      <p className="text-[10px] text-white/80 font-bold leading-normal max-w-[240px] mx-auto">
+                        Webcam access is constrained. You can troubleshoot below, OR use research backup:
+                      </p>
                     </div>
-                    <div className="flex flex-col gap-2 w-full max-w-[200px]">
+
+                    {/* Unified Backup File Area with drag/drop and device camera capture support */}
+                    <label 
+                      htmlFor="fallback-file-upload" 
+                      onDragOver={handleDragOver}
+                      onDragLeave={handleDragLeave}
+                      onDrop={handleDrop}
+                      className={`flex flex-col items-center justify-center border-2 border-dashed ${
+                        isDragging ? 'border-natural-accent bg-natural-accent/20 scale-[1.02]' : 'border-white/20 hover:border-white/40 bg-black/40'
+                      } rounded-2xl p-3 cursor-pointer transition-all w-full max-w-[250px] text-center my-1 select-none`}
+                    >
+                      <Upload className="text-natural-accent animate-bounce mb-1" size={18} />
+                      <span className="text-[10px] font-black tracking-wider uppercase text-yellow-100">
+                        Camera Backup 📷
+                      </span>
+                      <span className="text-[8px] text-white/60 block mt-0.5 leading-normal max-w-[200px]">
+                        Tap to capture with native camera, upload photo, or drag and drop.
+                      </span>
+                      <input 
+                        type="file" 
+                        id="fallback-file-upload" 
+                        accept="image/*" 
+                        className="hidden" 
+                        capture="user"
+                        onChange={handleFileUpload} 
+                      />
+                    </label>
+
+                    {/* Small divider */}
+                    <div className="w-full max-w-[220px] h-[1px] bg-white/10 my-1 font-mono text-[8px] text-white/40 flex items-center justify-center relative">
+                      <span className="bg-red-950 px-2 absolute">OR USER CONTROLS</span>
+                    </div>
+
+                    {/* Troubleshooting options */}
+                    <div className="flex gap-2 w-full max-w-[220px] shrink-0 mt-1">
                       <Button 
-                        size="lg" 
-                        className="bg-white text-red-950 hover:bg-white/90 rounded-2xl h-12 w-full text-sm uppercase font-black shadow-xl" 
+                        size="sm" 
+                        className="bg-white hover:bg-white/90 text-red-950 rounded-xl h-8 flex-1 text-[9px] uppercase font-black shadow-md" 
                         onClick={() => window.location.reload()}
                       >
                         Refresh
@@ -404,11 +436,17 @@ export function AttendanceKiosk() {
                       <Button 
                         size="sm" 
                         variant="secondary"
-                        className="bg-black/40 text-white border border-white/20 hover:bg-black/60 rounded-xl h-10 w-full text-[10px] uppercase font-black" 
+                        className="bg-black/60 text-white border border-white/20 hover:bg-black/80 rounded-xl h-8 flex-1 text-[9px] uppercase font-black" 
                         onClick={() => window.open(window.location.href, '_blank')}
                       >
-                        Open in New Tab ↗
+                        New Tab ↗
                       </Button>
+                    </div>
+
+                    <div className="bg-black/40 p-2 rounded-xl text-[8px] text-left border border-white/5 space-y-1 w-full max-w-[240px] mt-1 shrink-0">
+                      <p className="font-black text-red-300 uppercase underline text-[7px]">Troubleshooting Browser WebRTC:</p>
+                      <p>1. Tap <span className="font-bold underline text-white">"New Tab ↗"</span> below preview to load secure environment.</p>
+                      <p>2. Tap the blocked camera icon 📵 in address bar and set to <span className="font-bold text-green-400">Allow</span>.</p>
                     </div>
                   </div>
                 )}
@@ -433,7 +471,10 @@ export function AttendanceKiosk() {
                   }}
                   onUserMediaError={(err) => {
                     console.error("Webcam Error:", err);
-                    setCameraError("Camera Access Denied or Busy");
+                    const errMsg = typeof err === 'string' 
+                      ? err 
+                      : (err as any)?.message || (err as any)?.name || "Permission denied";
+                    setCameraError(errMsg);
                     setCameraReady(false);
                   }}
                 />

@@ -141,14 +141,13 @@ Output Format: JSON only.
       ];
 
       teachers.slice(0, 50).forEach((t: any) => {
-        const rawPhoto = t.photoUrl || t.photo || "";
+        const rawPhoto = t.photoUrl || "";
         const cleanRef = extractBase64(rawPhoto);
         
         if (cleanRef && cleanRef.length > 100 && !isDirty(cleanRef)) {
           const refMatch = rawPhoto.match(/^data:([^;]+);base64,/);
           const refMimeType = refMatch ? refMatch[1] : "image/jpeg";
-          const uniqueId = t.firebaseId || t.dbId || t.id;
-          imageParts.push({ text: `ID: ${uniqueId} Name: ${t.name}` });
+          imageParts.push({ text: `ID: ${t.id} Name: ${t.name}` });
           imageParts.push({ inlineData: { mimeType: refMimeType, data: cleanRef } });
         }
       });

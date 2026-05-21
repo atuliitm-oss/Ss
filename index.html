@@ -2,6 +2,17 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <script>
+      // Avoid crashes if libraries like exceljs or others assume Node.js globals at bundle load time
+      if (typeof global === 'undefined') {
+        window.global = window;
+      }
+      if (typeof Buffer === 'undefined') {
+        window.Buffer = {
+          isBuffer: () => false
+        };
+      }
+    </script>
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="manifest" href="/manifest.json" />
     <meta name="theme-color" content="#ffffff" />

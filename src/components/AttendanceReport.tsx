@@ -99,16 +99,9 @@ export function AttendanceReport() {
     // No absent teachers for future dates
     if (selectedDate > today) return [];
 
-    const presentTeacherDocIds = new Set<string>();
-    const presentLegacyKeys = new Set<string>();
-
-    logs.forEach(log => {
-      if (log.teacherDocId) {
-        presentTeacherDocIds.add(log.teacherDocId);
-      } else {
-        presentLegacyKeys.add(`${String(log.teacherId || '').trim().toUpperCase()}|${String(log.teacherName || '').trim().toLowerCase()}`);
-      }
-    });
+    const presentTeacherIds = new Set(
+      logs.map(log => String(log.teacherId || '').trim().toUpperCase())
+    );
     
     // We only want to count teachers who were already registered by this date
     // and are active.
@@ -116,10 +109,7 @@ export function AttendanceReport() {
     selDateEnd.setHours(23, 59, 59, 999);
 
     return allTeachers.filter(teacher => {
-      const teacherDocId = teacher.dbId || teacher.firebaseId || '';
       const teacherId = String(teacher.id || '').trim().toUpperCase();
-      const teacherName = String(teacher.name || '').trim().toLowerCase();
-      const legacyKey = `${teacherId}|${teacherName}`;
       const status = teacher.status || 'active';
       
       // Determine registration date
@@ -130,13 +120,11 @@ export function AttendanceReport() {
         regDate = new Date(teacher.createdAt);
       }
 
-      const isPresent = presentTeacherDocIds.has(teacherDocId) || presentLegacyKeys.has(legacyKey);
-
       return (
         teacherId && 
         status === 'active' && 
         regDate <= selDateEnd && 
-        !isPresent
+        !presentTeacherIds.has(teacherId)
       );
     });
   };
@@ -237,14 +225,8 @@ export function AttendanceReport() {
 
       // 3. Add data rows
       allTeachers.forEach((teacher, teacherIdx) => {
-        const teacherDocId = teacher.dbId || teacher.firebaseId || '';
         const teacherId = String(teacher.id || '').trim().toUpperCase();
-        const teacherName = String(teacher.name || '').trim().toLowerCase();
-        
-        const teacherLogs = logs.filter(l => 
-          l.teacherDocId === teacherDocId || 
-          (!l.teacherDocId && String(l.teacherId || '').trim().toUpperCase() === teacherId && String(l.teacherName || '').trim().toLowerCase() === teacherName)
-        );
+        const teacherLogs = logs.filter(l => String(l.teacherId || '').trim().toUpperCase() === teacherId);
         
         const rowData: any = {
           id: teacherId,
@@ -600,14 +582,8 @@ export function AttendanceReport() {
                   </thead>
                   <tbody>
                     {allTeachers.map((teacher, idx) => {
-                      const teacherDocId = teacher.dbId || teacher.firebaseId || '';
                       const teacherId = String(teacher.id || '').trim().toUpperCase();
-                      const teacherName = String(teacher.name || '').trim().toLowerCase();
-                      
-                      const teacherLogs = logs.filter(l => 
-                        l.teacherDocId === teacherDocId || 
-                        (!l.teacherDocId && String(l.teacherId || '').trim().toUpperCase() === teacherId && String(l.teacherName || '').trim().toLowerCase() === teacherName)
-                      );
+                      const teacherLogs = logs.filter(l => String(l.teacherId || '').trim().toUpperCase() === teacherId);
                       
                       return (
                         <tr key={teacher.dbId} className={`group hover:bg-natural-bg/30 transition-all ${idx % 2 === 0 ? '' : 'bg-gray-50/30'}`}>
