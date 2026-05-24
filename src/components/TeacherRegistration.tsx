@@ -75,6 +75,7 @@ export function TeacherRegistration() {
   const [cameraReady, setCameraReady] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [isOffline, setIsOffline] = useState(false);
+  const [cameraRetryKey, setCameraRetryKey] = useState(0);
   
   const webcamRef = useRef<Webcam>(null);
 
@@ -415,7 +416,7 @@ export function TeacherRegistration() {
                 <div className="space-y-2">
                   <h2 className="text-xl font-black text-natural-primary italic tracking-tight uppercase">Admin Access Required</h2>
                   <p className="text-xs font-bold text-natural-primary/40 uppercase tracking-widest leading-relaxed">
-                    Please enter the secure PIN to modify system configurations.
+                    Please enter the secure PIN to modify system configurations. <span className="text-indigo-600 block font-black mt-1">(Default PIN: 1234)</span>
                   </p>
                 </div>
                 
@@ -828,10 +829,21 @@ export function TeacherRegistration() {
                       <div className="flex flex-col gap-2 w-full max-w-[180px]">
                         <Button 
                           size="sm" 
+                          className="bg-indigo-600 text-white hover:bg-indigo-700 rounded-xl h-10 w-full text-[10px] uppercase font-black" 
+                          onClick={() => {
+                            setCameraError(null);
+                            setCameraReady(false);
+                            setCameraRetryKey(prev => prev + 1);
+                          }}
+                        >
+                          🔄 Retry Camera
+                        </Button>
+                        <Button 
+                          size="sm" 
                           className="bg-white text-red-950 hover:bg-white/90 rounded-xl h-10 w-full text-[10px] uppercase font-black" 
                           onClick={() => window.location.reload()}
                         >
-                          Refresh
+                          Refresh Page
                         </Button>
                         <Button 
                           size="sm" 
@@ -851,6 +863,7 @@ export function TeacherRegistration() {
                     </div>
                   )}
                   <Webcam
+                    key={cameraRetryKey}
                     audio={false}
                     ref={webcamRef}
                     screenshotFormat="image/jpeg"
@@ -1029,6 +1042,7 @@ export function TeacherRegistration() {
                             </div>
                           )}
                           <Webcam
+                            key={cameraRetryKey}
                             audio={false}
                             ref={webcamRef}
                             screenshotFormat="image/jpeg"

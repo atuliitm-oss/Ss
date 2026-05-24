@@ -65,6 +65,15 @@ export default function App() {
   };
 
   React.useEffect(() => {
+    // Auto upgrade http: to https: for safe media devices access (camera)
+    if (window.location.protocol === 'http:' && window.location.hostname !== 'localhost') {
+      try {
+        window.location.replace('https://' + window.location.host + window.location.pathname + window.location.search + window.location.hash);
+      } catch (err) {
+        console.error("HTTPS upgrade failed:", err);
+      }
+    }
+
     // Check for HTTPS (necessary for camera)
     if (window.location.protocol !== 'https:' && window.location.hostname !== 'localhost') {
       setIsNotHttps(true);

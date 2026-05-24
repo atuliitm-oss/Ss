@@ -5,8 +5,9 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import Webcam from 'react-webcam';
-import { Camera, Search, Loader2, CheckCircle2, XCircle, UserCheck, Upload, SwitchCamera, RefreshCw } from 'lucide-react';
+import { Camera, Search, Loader2, CheckCircle2, XCircle, UserCheck, Upload, SwitchCamera, RefreshCw, Lock, KeyRound } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { db, handleFirestoreError, OperationType } from '@/src/lib/firebase';
@@ -47,6 +48,14 @@ export function AttendanceKiosk() {
   const [isAutoScanEnabled, setIsAutoScanEnabled] = useState(false);
   const [isNotHttps, setIsNotHttps] = useState(false);
   const [permissionState, setPermissionState] = useState<PermissionState | null>(null);
+  const [hasLocalKey, setHasLocalKey] = useState(false);
+  const [cameraRetryKey, setCameraRetryKey] = useState(0);
+  const [isCameraActive, setIsCameraActive] = useState(false);
+
+  const [adminPin, setAdminPin] = useState('1234');
+  const [showPinDialog, setShowPinDialog] = useState(false);
+  const [pinInput, setPinInput] = useState('');
+  const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
 
   const webcamRef = useRef<Webcam>(null);
   const resetTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -54,6 +63,7 @@ export function AttendanceKiosk() {
   useEffect(() => {
     fetchTeachers();
     fetchSettings();
+    setHasLocalKey(!!(localStorage.getItem("GEMINI_API_KEY") || localStorage.getItem("VITE_GEMINI_API_KEY")));
 
     // Check for HTTPS
     if (window.location.protocol !== 'https:' && window.location.hostname !== 'localhost') {
@@ -93,6 +103,9 @@ export function AttendanceKiosk() {
           livenessSensitivity: data.livenessSensitivity ?? 0.5,
           compressionQuality: data.compressionQuality ?? 0.7
         });
+        if (data.adminPin) {
+          setAdminPin(data.adminPin);
+        }
       }
     } catch (error) {
       console.error("Error fetching AI settings:", error);
@@ -110,6 +123,11 @@ export function AttendanceKiosk() {
       if (resetTimerRef.current) clearTimeout(resetTimerRef.current);
     };
   }, [step, isAutoScanEnabled]);
+
+  // Update hasLocalKey status when step changes
+  useEffect(() => {
+    setHasLocalKey(!!(localStorage.getItem("GEMINI_API_KEY") || localStorage.getItem("VITE_GEMINI_API_KEY")));
+  }, [step]);
 
   // Clean, continuous automatic scanning cycle (CCTV Mode)
   useEffect(() => {
@@ -252,12 +270,36 @@ export function AttendanceKiosk() {
         confidence: 0,
         name: null,
         reason: isQuotaError 
-          ? "Free AI Daily limit reached. You can try again manually or wait for the system to resume."
+          ? "Free AI Daily limit reached. You can try uploading a photo from gallery instead or wait for the system to resume."
           : (error instanceof Error ? error.message : "System Error")
       });
       toast.error(isQuotaError ? "Quota Exceeded" : "Error");
     } finally {
       setVerifying(false);
+    }
+  };
+
+  const handleUploadWithPinCheck = () => {
+    if (isAdminAuthenticated) {
+      document.getElementById('native-gallery-upload')?.click();
+    } else {
+      setShowPinDialog(true);
+    }
+  };
+
+  const handleVerifyPin = () => {
+    if (pinInput === adminPin) {
+      setIsAdminAuthenticated(true);
+      setShowPinDialog(false);
+      setPinInput('');
+      toast.success("Admin Access Granted / प्रवेश स्वीकृत!");
+      
+      setTimeout(() => {
+        document.getElementById('native-gallery-upload')?.click();
+      }, 200);
+    } else {
+      toast.error("Incorrect PIN / गलत पिन दर्ज किया गया!");
+      setPinInput('');
     }
   };
 
@@ -310,7 +352,8 @@ export function AttendanceKiosk() {
     setCapturedPhoto(null);
     setResult(null);
     setVerifying(false);
-    setCameraReady(true);
+    setCameraReady(false);
+    setIsCameraActive(false);
   };
 
   const handleCapture = async (isAuto = false) => {
@@ -426,132 +469,205 @@ export function AttendanceKiosk() {
 
               {/* Main camera viewport */}
               <div className="w-[90%] md:w-[85%] h-[80%] md:h-auto md:aspect-[3/4] border-4 border-white rounded-[40px] md:rounded-[120px_120px_100px_100px] relative overflow-hidden bg-black shadow-inner">
-                {quotaPaused && (
-                  <div className="absolute inset-0 flex flex-col items-center justify-center text-white p-6 text-center gap-4 bg-amber-950/95 z-40 overflow-y-auto">
-                    <div className="p-3 bg-amber-500/20 rounded-full animate-pulse">
-                      <WifiOff className="text-amber-400" size={32} />
+                {!isCameraActive ? (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center text-white px-3 text-center gap-5 bg-slate-900/95 z-30">
+                    <div className="p-4 bg-indigo-500/10 rounded-full animate-bounce">
+                      <Camera className="text-indigo-400 animate-pulse" size={44} />
                     </div>
-                    <div className="space-y-1">
-                      <span className="text-xs font-black uppercase tracking-tight block text-amber-300">
-                        एआई कोटा सीमा (Daily Quota Reached)
+                    <div className="space-y-1 px-4">
+                      <span className="text-xs md:text-sm font-black uppercase tracking-tight block text-indigo-300 font-sans">
+                        चेहरा स्कैन करने के लिए कैमरा खोलें
                       </span>
-                      <p className="text-[10px] text-white/95 font-bold leading-normal max-w-[210px] mx-auto">
-                        मुफ़्त जेमिनी एआई लिमिट समाप्त। सिस्टम {Math.floor(quotaCountdown / 60)}m {quotaCountdown % 60}s में फिर से शुरू होगा।
+                      <p className="text-[9px] text-white/50 font-bold max-w-[210px] mx-auto uppercase">
+                        (Open camera to scan teacher's face)
                       </p>
                     </div>
 
-                    <div className="flex flex-col gap-1.5 w-full max-w-[215px] bg-black/40 p-3 rounded-2xl border border-white/10 text-left text-[9px] text-white/70">
-                      <p className="font-extrabold text-amber-300 uppercase">💡 त्वरित समाधान (Solution):</p>
-                      <p>1. <b>Register &gt; Config</b> टैब में जाएं</p>
-                      <p>2. वहां अपनी <b>Google Gemini API Key</b> सेव करें</p>
-                      <p>3. उसके बाद असीमित उपस्थिति तुरंत शुरू करें!</p>
-                    </div>
-
-                    <Button 
-                      size="sm" 
-                      onClick={() => setQuotaPaused(false)}
-                      className="bg-amber-600 hover:bg-amber-700 text-white rounded-xl h-9 w-full max-w-[210px] text-[10px] uppercase font-black"
-                    >
-                      बाईपास करें ({quotaCountdown}s)
-                    </Button>
-                  </div>
-                )}
-
-                {!cameraReady && !cameraError && (
-                  <div className="absolute inset-0 flex flex-col items-center justify-center text-white/40 gap-3 z-10 bg-neutral-900">
-                    <Loader2 className="animate-spin text-natural-accent" size={32} />
-                    <span className="text-[10px] font-black uppercase tracking-widest text-neutral-300">कैमरा लोड हो रहा है...</span>
-                  </div>
-                )}
-
-                {cameraError && (
-                  <div className="absolute inset-0 flex flex-col items-center justify-center text-white p-4 text-center gap-3 bg-red-950/95 z-30 overflow-y-auto w-full h-full">
-                    <div className="p-2.5 bg-red-500/20 rounded-full shrink-0">
-                      <ShieldAlert className="text-red-400" size={32} />
-                    </div>
-                    <div className="space-y-1">
-                      <span className="text-xs font-black uppercase tracking-tight block text-red-200">
-                        कैमरा एक्सेस ब्लॉक है (Camera Blocked)
-                      </span>
-                      <p className="text-[10px] text-white/85 font-bold leading-normal max-w-[210px] mx-auto">
-                        सुरक्षा कारणों से आईफ्रेम (iframe) में कैमरा चालू नहीं हो रहा है। उपस्थिति दर्ज करने के लिए नीचे दिए गए विकल्प चुनें:
-                      </p>
-                    </div>
-
-                    <div className="flex flex-col gap-2 w-full max-w-[210px] shrink-0">
+                    <div className="flex flex-col gap-2.5 w-full max-w-[220px] px-2 shrink-0">
                       <Button 
-                        size="sm" 
-                        onClick={() => window.open(window.location.href, '_blank')}
-                        className="bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl h-10 w-full text-[10px] uppercase font-black shadow-md flex items-center justify-center gap-1.5"
+                        size="lg" 
+                        onClick={() => {
+                          setIsCameraActive(true);
+                          setCameraReady(false);
+                          setCameraError(null);
+                        }}
+                        className="bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-700 hover:to-indigo-600 text-white rounded-2xl h-12 w-full text-[10px] uppercase font-black tracking-widest shadow-lg shadow-indigo-600/30 flex items-center justify-center gap-2 border border-indigo-400/20 active:scale-95 transition-all text-center animate-pulse shrink-0"
                       >
-                        <RefreshCw size={12} className="animate-spin" style={{ animationDuration: '3s' }} /> ⚡ नए टैब में खोलें (Instant fix) ↗
+                        📷 कैमरा चालू करें (Open Camera)
                       </Button>
-                      <label 
-                        htmlFor="native-gallery-upload"
-                        className="bg-amber-600 hover:bg-amber-700 text-white h-10 rounded-xl flex items-center justify-center gap-1.5 text-[10px] uppercase font-black shadow-md cursor-pointer text-center select-none animate-bounce"
+
+                      <div className="relative flex py-0.5 items-center shrink-0">
+                        <div className="flex-grow border-t border-white/10"></div>
+                        <span className="flex-shrink mx-3 text-[8px] font-black text-white/35 uppercase tracking-widest">या (OR)</span>
+                        <div className="flex-grow border-t border-white/10"></div>
+                      </div>
+
+                      <Button 
+                        onClick={handleUploadWithPinCheck}
+                        className="w-full h-11 rounded-2xl bg-white hover:bg-neutral-50 text-neutral-800 border-none flex items-center justify-center gap-2 font-black text-[10px] uppercase shadow-md active:scale-95 transition-all text-center select-none shrink-0"
                       >
-                        <Upload size={12} /> 📸 मोबाईल गैलरी से अपलोड करें
-                      </label>
+                        <Upload size={14} className="text-indigo-600" /> 📸 फोटो अपलोड करें (Gallery)
+                      </Button>
                     </div>
                   </div>
-                )}
+                ) : (
+                  <>
+                    {quotaPaused && (
+                      <div className="absolute inset-0 flex flex-col items-center justify-center text-white p-6 text-center gap-4 bg-amber-950/95 z-40 overflow-y-auto w-full h-full">
+                        <div className="p-3 bg-amber-500/20 rounded-full animate-pulse shrink-0">
+                          <WifiOff className="text-amber-400" size={32} />
+                        </div>
+                        <div className="space-y-1">
+                          <span className="text-xs font-black uppercase tracking-tight block text-amber-300 text-center">
+                            एआई कोटा सीमा (Daily Quota Reached)
+                          </span>
+                          <p className="text-[10px] text-white/95 font-bold leading-normal max-w-[210px] mx-auto text-center">
+                            मुफ़्त जेमिनी एआई लिमिट समाप्त। सिस्टम {Math.floor(quotaCountdown / 60)}m {quotaCountdown % 60}s में फिर से शुरू होगा।
+                          </p>
+                        </div>
 
-                {/* HTML Webcam Element */}
-                <Webcam
-                  audio={false}
-                  ref={webcamRef}
-                  screenshotFormat="image/jpeg"
-                  className={`w-full h-full object-cover transition-opacity duration-300 ${cameraReady ? 'opacity-100' : 'opacity-0'}`}
-                  videoConstraints={{ facingMode }}
-                  mirrored={facingMode === 'user'}
-                  screenshotQuality={0.92}
-                  imageSmoothing={true}
-                  disablePictureInPicture={true}
-                  forceScreenshotSourceSize={false}
-                  onUserMedia={() => {
-                    setCameraReady(true);
-                    setCameraError(null);
-                  }}
-                  onUserMediaError={(err) => {
-                    console.error("Webcam Error:", err);
-                    setCameraError("Camera permission blocked.");
-                    setCameraReady(false);
-                  }}
-                />
+                        <div className="flex flex-col gap-1.5 w-full max-w-[215px] bg-black/40 p-3 rounded-2xl border border-white/10 text-left text-[9px] text-white/70 overflow-y-auto">
+                          <p className="font-extrabold text-amber-300 uppercase">💡 त्वरित समाधान (Solution):</p>
+                          <p>1. <b>Register &gt; Config</b> टैब में जाएं</p>
+                          <p>2. वहां अपनी <b>Google Gemini API Key</b> सेव करें</p>
+                          <p>3. उसके बाद असीमित उपस्थिति तुरंत शुरू करें!</p>
+                        </div>
 
-                {/* Dynamic Face align contour overlay */}
-                {cameraReady && !cameraError && (
-                  <div className="absolute inset-8 border border-white/20 rounded-[80px_80px_60px_60px] pointer-events-none flex flex-col items-center justify-center">
-                    <div className="w-16 h-16 rounded-full border border-white/10 mt-6" />
-                    <span className="text-[7px] text-white/35 uppercase font-black tracking-[0.2em] mt-auto mb-16">
-                      यहाँ चेहरा संरेखित करें
-                    </span>
-                  </div>
+                        <Button 
+                          size="sm" 
+                          onClick={() => setQuotaPaused(false)}
+                          className="bg-amber-600 hover:bg-amber-700 text-white rounded-xl h-9 w-full max-w-[210px] text-[10px] uppercase font-black shrink-0"
+                        >
+                          बाईपास करें ({quotaCountdown}s)
+                        </Button>
+                      </div>
+                    )}
+
+                    {!cameraReady && !cameraError && (
+                      <div className="absolute inset-0 flex flex-col items-center justify-center text-white/40 gap-3 z-10 bg-neutral-900">
+                        <Loader2 className="animate-spin text-natural-accent" size={32} />
+                        <span className="text-[10px] font-black uppercase tracking-widest text-neutral-300">कैमरा लोड हो रहा है...</span>
+                      </div>
+                    )}
+
+                    {cameraError && (
+                      <div className="absolute inset-0 flex flex-col items-center justify-center text-white p-3 text-center gap-2.5 bg-red-950/98 z-30 overflow-y-auto w-full h-full">
+                        <div className="p-2 bg-red-500/20 rounded-full shrink-0">
+                          <ShieldAlert className="text-red-400" size={28} />
+                        </div>
+                        <div className="space-y-1">
+                          <span className="text-[11px] font-black uppercase tracking-tight block text-red-200">
+                            कैमरा अनुमति अस्वीकार है (Camera Blocked / Permission Denied)
+                          </span>
+                          <div className="bg-black/40 p-2.5 rounded-2xl text-[9px] text-left border border-white/10 space-y-1.5 max-w-[230px] mx-auto text-neutral-200">
+                            <p className="font-extrabold text-red-300 uppercase underline">त्वरित समाधान (Quick Guide):</p>
+                            <p>1. Chrome/Safari के एड्रेस बार में <b>🔒 (ताला) या 🎥 (कैमरा)</b> आइकॉन पर क्लिक करें।</p>
+                            <p>2. वहां <b>Camera: block/Ask</b> को बदलकर <b>Allow (अनुमति दें)</b> करें।</p>
+                          </div>
+                        </div>
+
+                        <div className="flex flex-col gap-1.5 w-full max-w-[210px] shrink-0">
+                          <Button 
+                            size="sm" 
+                            onClick={() => {
+                              setCameraError(null);
+                              setCameraReady(false);
+                              setCameraRetryKey(prev => prev + 1);
+                            }}
+                            className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl h-9 w-full text-[9px] uppercase font-black shadow-md flex items-center justify-center gap-1 border-none"
+                          >
+                            🔄 पुनः प्रयास करें (Retry Camera)
+                          </Button>
+                          <Button 
+                            size="sm" 
+                            onClick={() => window.open(window.location.href, '_blank')}
+                            className="bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-700 hover:to-green-700 text-white rounded-xl h-9 w-full text-[9px] uppercase font-black shadow-md flex items-center justify-center gap-1 border-none"
+                          >
+                            ⚡ नए टैब में खोलें (Open in New Tab) ↗
+                          </Button>
+                          <Button 
+                            size="sm" 
+                            onClick={() => {
+                              setIsCameraActive(false);
+                              setCameraReady(false);
+                              setCameraError(null);
+                            }}
+                            variant="secondary"
+                            className="text-neutral-700 bg-white hover:bg-neutral-100 rounded-xl h-9 w-full text-[9px] uppercase font-black shadow-sm flex items-center justify-center gap-1 border border-neutral-200"
+                          >
+                            पीछे जाएं (Go Back)
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* HTML Webcam Element */}
+                    <Webcam
+                      key={cameraRetryKey}
+                      audio={false}
+                      ref={webcamRef}
+                      screenshotFormat="image/jpeg"
+                      className={`w-full h-full object-cover transition-opacity duration-300 ${cameraReady ? 'opacity-100' : 'opacity-0'}`}
+                      videoConstraints={{ facingMode }}
+                      mirrored={facingMode === 'user'}
+                      screenshotQuality={0.92}
+                      imageSmoothing={true}
+                      disablePictureInPicture={true}
+                      forceScreenshotSourceSize={false}
+                      onUserMedia={() => {
+                        setCameraReady(true);
+                        setCameraError(null);
+                      }}
+                      onUserMediaError={(err) => {
+                        console.error("Webcam Error:", err);
+                        setCameraError("Camera permission blocked.");
+                        setCameraReady(false);
+                      }}
+                    />
+
+                    {/* Dynamic Face align contour overlay */}
+                    {cameraReady && !cameraError && (
+                      <div className="absolute inset-8 border border-white/20 rounded-[80px_80px_60px_60px] pointer-events-none flex flex-col items-center justify-center">
+                        <div className="w-16 h-16 rounded-full border border-white/10 mt-6" />
+                        <span className="text-[7px] text-white/35 uppercase font-black tracking-[0.2em] mt-auto mb-16">
+                          यहाँ चेहरा संरेखित करें
+                        </span>
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
 
               {/* Bottom Triggers & Upload Controls */}
               <div className="absolute bottom-3 left-0 right-0 px-4 md:px-6 flex flex-col items-center gap-2.5 z-20 w-full">
-                {cameraReady && !cameraError && (
-                  <Button 
-                    onClick={() => handleCapture(false)} 
-                    disabled={verifying}
-                    className="w-[90%] md:w-[85%] h-12 rounded-xl bg-gradient-to-r from-natural-accent to-orange-500 hover:from-natural-accent/90 hover:to-orange-600 text-white font-black text-xs uppercase shadow-md transition-all active:scale-[0.98] border border-white/20 disabled:opacity-50"
-                  >
-                    {verifying ? (
-                      <><Loader2 size={16} className="mr-2 animate-spin" /> पहचान की जा रही है...</>
-                    ) : (
-                      <><Camera size={16} className="mr-2 animate-bounce" /> 👉 कैमरा से फोटो खींचें (Scan Now) :</>
-                    )}
-                  </Button>
+                {isCameraActive && cameraReady && !cameraError && (
+                  <div className="flex gap-2 w-[90%] md:w-[85%] self-center justify-center">
+                    <Button 
+                      onClick={() => handleCapture(false)} 
+                      disabled={verifying}
+                      className="flex-1 h-12 rounded-xl bg-gradient-to-r from-natural-accent to-orange-500 hover:from-natural-accent/90 hover:to-orange-600 text-white font-black text-xs uppercase shadow-md transition-all active:scale-[0.98] border border-white/20 disabled:opacity-50"
+                    >
+                      {verifying ? (
+                        <><Loader2 size={16} className="mr-2 animate-spin" /> पहचान की जा रही है...</>
+                      ) : (
+                        <><Camera size={16} className="mr-2 animate-bounce animate-duration-1000" /> 👉 चेहरा स्कैन करें (Scan Now)</>
+                      )}
+                    </Button>
+                    <Button 
+                      onClick={() => {
+                        setIsCameraActive(false);
+                        setCameraReady(false);
+                        setCameraError(null);
+                      }}
+                      variant="outline"
+                      className="h-12 w-12 rounded-xl flex items-center justify-center bg-white hover:bg-neutral-50 text-neutral-600 border border-neutral-200 p-0 shadow-md font-bold shrink-0"
+                      title="कैमरा बंद करें (Close Camera)"
+                    >
+                      ✕
+                    </Button>
+                  </div>
                 )}
-
-                <label 
-                  htmlFor="native-gallery-upload"
-                  className="w-[90%] md:w-[85%] h-11 rounded-xl bg-white text-natural-primary border border-natural-primary/20 hover:bg-neutral-50 cursor-pointer flex items-center justify-center gap-2 font-black text-xs uppercase shadow-sm active:scale-95 transition-all text-center select-none"
-                >
-                  <Upload size={14} className="text-natural-accent animate-pulse" /> 📸 मोबाइल गैलरी से फोटो अपलोड करें (Gallery)
-                </label>
+                
                 <input 
                   type="file" 
                   id="native-gallery-upload" 
@@ -599,7 +715,69 @@ export function AttendanceKiosk() {
                         ? <span>Welcome, <span className="text-natural-accent">{result.name}</span></span> 
                         : 'Unknown Face')}
                   </p>
-                  <p className="text-[10px] md:text-[11px] text-natural-text/50 font-medium px-2">{result.reason}</p>
+                  {result.reason && (result.reason.includes("GEMINI_API_KEY") || result.reason.includes("API Key")) ? (
+                    <div className="mt-4 p-4 bg-amber-50 border border-amber-200 rounded-2xl text-left space-y-3 shadow-inner max-h-[220px] overflow-y-auto">
+                      <p className="text-xs font-black text-amber-800 uppercase tracking-wide flex items-center gap-1.5">
+                        ⚠️ जेमिनी API Key कॉन्फ़िगर नहीं है (API Key Missing)
+                      </p>
+                      
+                      <p className="text-[10px] text-amber-950 font-bold leading-relaxed">
+                        यह ऐप <b>Render</b> सर्वर पर चल रहा है। इस समस्या को सुधारने के लिए आपके पास <b>दो (2) बहुत आसान विकल्प</b> हैं:
+                      </p>
+
+                      <div className="space-y-3 pt-1">
+                        {/* Option 1 */}
+                        <div className="bg-white p-2.5 rounded-xl border border-amber-100 text-[10px] space-y-1 shadow-sm">
+                          <p className="font-extrabold text-amber-900 uppercase">विकल्प 1: सीधे यहाँ API Key सेट करें (त्वरित समाधान)</p>
+                          <p className="text-neutral-500">यह आपके स्थानीय ब्राउज़र में सुरक्षित रूप से सेव हो जाएगी और तुरंत चलने लगेगी:</p>
+                          <div className="flex gap-2 mt-1.5">
+                            <input 
+                              type="password"
+                              id="quick-api-key"
+                              placeholder="Google Gemini API Key Paste Kare (AIzaSy...)"
+                              className="flex-1 h-9 px-2.5 bg-neutral-50 focus:bg-white border border-amber-200 focus:border-amber-500 rounded-lg text-xs font-mono"
+                              onChange={(e) => {
+                                (window as any)._tempQuickKey = e.target.value.trim();
+                              }}
+                            />
+                            <button
+                              onClick={() => {
+                                const key = (window as any)._tempQuickKey;
+                                if (key) {
+                                  localStorage.setItem("VITE_GEMINI_API_KEY", key);
+                                  localStorage.setItem("GEMINI_API_KEY", key);
+                                  setHasLocalKey(true);
+                                  toast.success("API Key saved in browser local storage! Click DONE and scan again.");
+                                  reset();
+                                } else {
+                                  toast.error("Please enter a valid key first / कृपया सही की डालें");
+                                }
+                              }}
+                              className="h-9 px-3 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-[10px] font-black uppercase transition-all"
+                            >
+                              Save
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Option 2 */}
+                        <div className="bg-white p-2.5 rounded-xl border border-amber-100 text-[10px] space-y-1 shadow-sm">
+                          <p className="font-extrabold text-amber-900 uppercase">विकल्प 2: Render डैशबोर्ड में परमानेंट सेट करें (Recommended)</p>
+                          <ol className="list-decimal pl-4 space-y-1 text-neutral-700 font-bold leading-relaxed mt-1">
+                            <li>अपने <b>Render Dashboard</b> (<a href="https://dashboard.render.com" target="_blank" rel="noopener noreferrer" className="text-indigo-600 underline font-black">dashboard.render.com</a>) में लॉगिन करें।</li>
+                            <li>अपने वेब सर्विस प्रोजेक्ट/ऐप को खोलें।</li>
+                            <li>बाएँ (Left) मेनू से <b>Environment</b> टैब पर क्लिक करें।</li>
+                            <li><b>Add Environment Variable</b> बटन दबाएँ।</li>
+                            <li><b>Key:</b> में <code className="bg-neutral-100 px-1 py-0.5 rounded font-mono text-red-600">GEMINI_API_KEY</code> लिखें।</li>
+                            <li><b>Value:</b> में अपनी असली गूगल जेमिनी एपीआई की (उदा. <code className="bg-neutral-100 px-1 py-0.5 rounded font-mono">AIzaSy...</code>) पेस्ट करें।</li>
+                            <li>नीचे <b>Save Changes</b> बटन पर क्लिक करें। Render ऑटोमैटिकली री-डिप्लॉय कर देगा और एरर दूर हो जाएगी!</li>
+                          </ol>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="text-[10px] md:text-[11px] text-natural-text/50 font-medium px-2">{result.reason}</p>
+                  )}
                 </div>
                 <Button onClick={reset} className="w-full h-14 md:h-16 rounded-xl md:rounded-[24px] text-lg md:text-xl font-black bg-gradient-to-r from-natural-primary to-indigo-600 hover:shadow-xl transition-all text-white">
                   DONE
@@ -646,15 +824,97 @@ export function AttendanceKiosk() {
                    <span className="text-[8px] md:text-[10px] font-bold text-green-600">LIVE</span>
                 </div>
              </div>
-             <div className="bg-natural-bg/50 p-3 md:p-4 rounded-xl">
+             <div className="bg-natural-bg/50 p-3 md:p-4 rounded-xl space-y-2">
                 <div className="flex justify-between items-center text-xs md:text-sm">
                    <span className="text-natural-primary/60 font-medium italic">Active Profiles:</span>
                    <span className="font-bold text-natural-primary">{teachers.length} Professionals</span>
                 </div>
+                {hasLocalKey && (
+                   <div className="text-[9.5px] text-emerald-700 font-extrabold flex items-center justify-between gap-1.5 bg-emerald-50 px-2.5 py-1.5 rounded-lg border border-emerald-100 w-full">
+                     <span>⚡ Custom API Key Active (Browser)</span>
+                     <button 
+                       onClick={() => {
+                         localStorage.removeItem("GEMINI_API_KEY");
+                         localStorage.removeItem("VITE_GEMINI_API_KEY");
+                         setHasLocalKey(false);
+                         toast.info("Custom local API Key removed!");
+                       }} 
+                       className="text-red-500 hover:text-red-700 font-black cursor-pointer uppercase tracking-wider text-[8px]"
+                     >
+                       Clear
+                     </button>
+                   </div>
+                )}
              </div>
           </div>
         )}
       </div>
+
+      <AnimatePresence>
+        {showPinDialog && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/60 backdrop-blur-md z-[110] flex items-center justify-center p-4"
+          >
+            <motion.div 
+              initial={{ scale: 0.9, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.9, y: 20 }}
+              className="bg-white natural-card w-full max-w-sm overflow-hidden shadow-2xl p-8"
+            >
+              <div className="flex flex-col items-center text-center gap-6">
+                <div className="w-16 h-16 bg-natural-primary/10 rounded-full flex items-center justify-center text-natural-primary">
+                  <Lock size={32} />
+                </div>
+                <div className="space-y-1">
+                  <h2 className="text-lg font-black text-natural-primary italic tracking-tight uppercase">Admin Access Required</h2>
+                  <p className="text-xs font-bold text-natural-primary/40 uppercase tracking-widest leading-relaxed">
+                    प्रविष्टि के लिए पिन दर्ज करें (Enter Secure PIN to Proceed).
+                  </p>
+                </div>
+                
+                <div className="w-full space-y-4">
+                  <div className="relative">
+                    <KeyRound className="absolute left-4 top-1/2 -translate-y-1/2 text-natural-primary/30" size={20} />
+                    <Input 
+                      type="password" 
+                      value={pinInput}
+                      onChange={(e) => setPinInput(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && handleVerifyPin()}
+                      placeholder="ENTER PIN" 
+                      className="h-14 pl-12 rounded-2xl bg-slate-50 border-2 border-transparent focus:border-indigo-500/20 transition-all font-black tracking-[0.5em] text-center text-lg text-natural-primary"
+                      autoFocus
+                    />
+                  </div>
+                  
+                  <div className="flex gap-3">
+                    <Button 
+                      variant="outline" 
+                      className="flex-1 h-12 rounded-xl font-bold"
+                      onClick={() => {
+                        setShowPinDialog(false);
+                        setPinInput('');
+                      }}
+                    >
+                      रद्द करें (Cancel)
+                    </Button>
+                    <Button 
+                      className="flex-1 h-12 rounded-xl font-bold bg-natural-primary hover:bg-indigo-700 text-white"
+                      onClick={handleVerifyPin}
+                    >
+                      पुष्टि करें (Verify)
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+
+
+      </AnimatePresence>
     </div>
   );
 }
