@@ -53,6 +53,10 @@ export function TeacherRegistration() {
   const [livenessSensitivity, setLivenessSensitivity] = useState(0.5);
   const [compressionQuality, setCompressionQuality] = useState(0.7);
   const [savingSettings, setSavingSettings] = useState(false);
+  const [clientGeminiApiKey, setClientGeminiApiKey] = useState(() => {
+    return localStorage.getItem("VITE_GEMINI_API_KEY") || localStorage.getItem("GEMINI_API_KEY") || "";
+  });
+  const [showApiKey, setShowApiKey] = useState(false);
 
   const [isCapturing, setIsCapturing] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -132,6 +136,15 @@ export function TeacherRegistration() {
         adminPin,
         updatedAt: serverTimestamp()
       });
+      
+      if (clientGeminiApiKey.trim()) {
+        localStorage.setItem("VITE_GEMINI_API_KEY", clientGeminiApiKey.trim());
+        localStorage.setItem("GEMINI_API_KEY", clientGeminiApiKey.trim());
+      } else {
+        localStorage.removeItem("VITE_GEMINI_API_KEY");
+        localStorage.removeItem("GEMINI_API_KEY");
+      }
+
       toast.success("AI & Security Configuration saved!");
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, "config");
@@ -621,6 +634,61 @@ export function TeacherRegistration() {
                 Higher sensitivity may lead to more "Spoof Alert" errors if lighting is poor. Lower match confidence increases "False Positives" (marking the wrong person).
               </p>
             </div>
+
+            <div className="p-5 bg-gradient-to-br from-indigo-50/50 to-blue-50/50 border-2 border-indigo-100/50 rounded-3xl space-y-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="space-y-1">
+                  <Label className="text-sm font-black text-indigo-900 flex items-center gap-2">
+                    <KeyRound size={16} className="text-indigo-600" /> Google Gemini API Key
+                  </Label>
+                  <p className="text-[10px] text-indigo-700/70 font-bold tracking-wide uppercase">
+                    Direct Browser Local Setup
+                  </p>
+                </div>
+                {clientGeminiApiKey.trim() && (
+                  <div className="bg-emerald-600 text-[8px] font-black uppercase text-white px-2.5 py-1 rounded-full tracking-wider shadow-sm">
+                    KEY ADDED
+                  </div>
+                )}
+              </div>
+              <p className="text-[10px] text-indigo-950 font-medium leading-relaxed">
+                यदि आपकी वेबकैम फेस आइडेंटिफिकेशन नेटलिफाय (Netlify) जैसी साइट पर नहीं चल पा रही है, तो अपनी गूगल जेमिनी एपीआई की (Google Gemini API Key) सीधे यहाँ डाल सकते हैं। यह आपके डिवाइस के ब्राउज़र में ही सुरक्षित रहेगी।
+              </p>
+              <div className="flex gap-2">
+                <div className="relative flex-1">
+                  <Input 
+                    type={showApiKey ? "text" : "password"}
+                    value={clientGeminiApiKey}
+                    onChange={(e) => setClientGeminiApiKey(e.target.value)}
+                    placeholder="Paste Gemini API Key here (AIzaSy...)" 
+                    className="h-11 rounded-xl bg-white border-indigo-200 focus:border-indigo-500 shadow-sm font-mono text-xs pr-12 focus-visible:ring-1 focus-visible:ring-indigo-500/20"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowApiKey(!showApiKey)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 font-black text-[9px] uppercase tracking-wider text-indigo-500 hover:text-indigo-800 transition-colors cursor-pointer"
+                  >
+                    {showApiKey ? "Hide" : "Show"}
+                  </button>
+                </div>
+                {clientGeminiApiKey && (
+                  <Button 
+                    type="button"
+                    variant="outline"
+                    className="h-11 rounded-xl font-bold text-xs hover:bg-indigo-100 border-indigo-200"
+                    onClick={() => {
+                      setClientGeminiApiKey("");
+                      toast.info("की (Key) साफ़ की गयी। कृपया नीचे 'Save AI System Settings' पर क्लिक करें।");
+                    }}
+                  >
+                    Clear
+                  </Button>
+                )}
+              </div>
+              <div className="text-[9px] text-indigo-500 font-bold flex items-center gap-1.5">
+                <span>🔐 यह सीधे Google Gemini APIs को सुरक्षित रूप से आपके ब्राउज़र से कॉल करेगी।</span>
+              </div>
+            </div>
           </div>
         ) : activeTab === 'single' ? (
           <div className="space-y-6">
@@ -773,6 +841,12 @@ export function TeacherRegistration() {
                         >
                           Open in New Tab ↗
                         </Button>
+                        <label 
+                          htmlFor="photo-upload"
+                          className="bg-amber-600 hover:bg-amber-700 text-white h-10 rounded-xl flex items-center justify-center gap-1.5 text-[10px] uppercase font-black shadow-md cursor-pointer text-center select-none"
+                        >
+                          <Upload size={12} /> Gallery Upload
+                        </label>
                       </div>
                     </div>
                   )}
@@ -798,16 +872,6 @@ export function TeacherRegistration() {
                     disablePictureInPicture={true}
                     screenshotQuality={0.9}
                   />
-                  
-                  <div className="absolute top-4 right-4 flex flex-col gap-2">
-                    <Button 
-                      onClick={toggleCamera}
-                      variant="secondary"
-                      className="rounded-full w-10 h-10 p-0 bg-white/20 backdrop-blur-md border-none text-white hover:bg-white/40"
-                    >
-                      <Upload size={18} />
-                    </Button>
-                  </div>
 
                   <Button 
                     onClick={capture}

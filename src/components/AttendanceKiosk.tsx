@@ -3,9 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import Webcam from 'react-webcam';
-import { Camera, Search, Loader2, CheckCircle2, XCircle, UserCheck, Upload } from 'lucide-react';
+import { Camera, Search, Loader2, CheckCircle2, XCircle, UserCheck, Upload, SwitchCamera, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -33,21 +33,22 @@ export function AttendanceKiosk() {
     isAlreadyMarked?: boolean 
   } | null>(null);
   const [capturedPhoto, setCapturedPhoto] = useState<string | null>(null);
-  const [cameraReady, setCameraReady] = useState(false);
-  const [cameraError, setCameraError] = useState<string | null>(null);
   const [step, setStep] = useState<'capture' | 'result'>('capture');
-  const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
-  const [isAutoScanEnabled, setIsAutoScanEnabled] = useState(true);
-  const [isAutoScanning, setIsAutoScanning] = useState(false);
   const [quotaPaused, setQuotaPaused] = useState(false);
   const [quotaCountdown, setQuotaCountdown] = useState(0);
   const [isOffline, setIsOffline] = useState(false);
-  const [isNotHttps, setIsNotHttps] = useState(false);
-  const [permissionState, setPermissionState] = useState<PermissionState | null>(null);
   const [isDragging, setIsDragging] = useState(false);
 
+  // New Camera-oriented state variables
+  const [inputMode, setInputMode] = useState<'live' | 'file'>('live');
+  const [cameraReady, setCameraReady] = useState(false);
+  const [cameraError, setCameraError] = useState<string | null>(null);
+  const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
+  const [isAutoScanEnabled, setIsAutoScanEnabled] = useState(false);
+  const [isNotHttps, setIsNotHttps] = useState(false);
+  const [permissionState, setPermissionState] = useState<PermissionState | null>(null);
+
   const webcamRef = useRef<Webcam>(null);
-  const scanTimerRef = useRef<NodeJS.Timeout | null>(null);
   const resetTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
@@ -81,18 +82,6 @@ export function AttendanceKiosk() {
     };
   }, []);
 
-  // Auto-reset result screen after 5 seconds if auto-scan is on
-  useEffect(() => {
-    if (step === 'result' && isAutoScanEnabled) {
-      resetTimerRef.current = setTimeout(() => {
-        reset();
-      }, 5000);
-    }
-    return () => {
-      if (resetTimerRef.current) clearTimeout(resetTimerRef.current);
-    };
-  }, [step, isAutoScanEnabled]);
-
   const fetchSettings = async () => {
     try {
       const configRef = doc(db, "config", "ai_settings");
@@ -110,22 +99,34 @@ export function AttendanceKiosk() {
     }
   };
 
-  // Automatic scanning effect
+  // Auto-reset result screen after 7 seconds so scanner remains fully automatic for other users
+  useEffect(() => {
+    if (step === 'result' && isAutoScanEnabled) {
+      resetTimerRef.current = setTimeout(() => {
+        reset();
+      }, 7000);
+    }
+    return () => {
+      if (resetTimerRef.current) clearTimeout(resetTimerRef.current);
+    };
+  }, [step, isAutoScanEnabled]);
+
+  // Clean, continuous automatic scanning cycle (CCTV Mode)
   useEffect(() => {
     let interval: NodeJS.Timeout | null = null;
     
-    if (step === 'capture' && teachers.length > 0 && !loading && !verifying && !quotaPaused && isAutoScanEnabled) {
+    if (step === 'capture' && teachers.length > 0 && !loading && !verifying && !quotaPaused && isAutoScanEnabled && cameraReady && inputMode === 'live') {
       interval = setInterval(() => {
-        handleCapture(true); // pass true for auto-scan
-      }, 30000); // 30 seconds to preserve quota while still monitoring
+        handleCapture(true); // pass true for silent auto-scan
+      }, 7000); // scan every 7 seconds when active
     }
 
     return () => {
       if (interval) clearInterval(interval);
     };
-  }, [step, teachers, loading, verifying, quotaPaused, isAutoScanEnabled]);
+  }, [step, teachers, loading, verifying, quotaPaused, isAutoScanEnabled, cameraReady, inputMode]);
 
-  // Reset quota pause after 5 minutes
+  // Reset quota countdown if paused
   useEffect(() => {
     let timer: NodeJS.Timeout;
     let interval: NodeJS.Timeout;
@@ -164,13 +165,12 @@ export function AttendanceKiosk() {
     }
   };
 
-  const processImageAndVerify = async (imageSrc: string, isAuto = false) => {
+  const processImageAndVerify = async (imageSrc: string) => {
     if (teachers.length === 0) {
-      if (!isAuto) toast.error("No teachers registered in system");
+      toast.error("No teachers registered in system");
       return;
     }
 
-    if (isAuto) setIsAutoScanning(true);
     setCapturedPhoto(imageSrc);
     setVerifying(true);
     
@@ -234,11 +234,9 @@ export function AttendanceKiosk() {
         setStep('result');
         toast.success(`Welcome, ${matchResult.name}`);
       } else {
-        if (!isAuto) {
-          setStep('result');
-          setResult(matchResult);
-          toast.error("Face not recognized");
-        }
+        setStep('result');
+        setResult(matchResult);
+        toast.error("Face not recognized");
       }
     } catch (error: any) {
       const isQuotaError = error?.message?.includes("quota") || error?.message?.includes("429");
@@ -246,54 +244,21 @@ export function AttendanceKiosk() {
         setQuotaPaused(true);
       }
 
-      if (!isAuto) {
-        setStep('result');
-        setResult({
-          isMatch: false,
-          isLivePerson: true,
-          matchedId: null,
-          confidence: 0,
-          name: null,
-          reason: isQuotaError 
-            ? "Free AI Daily limit reached. You can try again manually or wait for the system to resume."
-            : (error instanceof Error ? error.message : "System Error")
-        });
-        toast.error(isQuotaError ? "Quota Exceeded" : "Error");
-      }
+      setStep('result');
+      setResult({
+        isMatch: false,
+        isLivePerson: true,
+        matchedId: null,
+        confidence: 0,
+        name: null,
+        reason: isQuotaError 
+          ? "Free AI Daily limit reached. You can try again manually or wait for the system to resume."
+          : (error instanceof Error ? error.message : "System Error")
+      });
+      toast.error(isQuotaError ? "Quota Exceeded" : "Error");
     } finally {
       setVerifying(false);
-      setIsAutoScanning(false);
     }
-  };
-
-  const handleCapture = async (isAuto = false) => {
-    if (verifying) return;
-    
-    if (!webcamRef.current) {
-      if (!isAuto) toast.error("Camera system not initialized");
-      return;
-    }
-
-    if (!cameraReady && !isAuto) {
-      toast.error("Please wait for camera to initialize");
-      return;
-    }
-
-    let imageSrc = webcamRef.current.getScreenshot();
-    
-    // Retry once after a short delay if it's null or empty (common when camera just started)
-    if (!imageSrc || imageSrc === 'data:,' || imageSrc.length < 100) {
-      await new Promise(resolve => setTimeout(resolve, 500));
-      imageSrc = webcamRef.current.getScreenshot();
-    }
-    
-    if (!imageSrc || imageSrc === 'data:,' || imageSrc.length < 100) {
-      console.warn("Capture failed after retry. Length:", imageSrc?.length);
-      if (!isAuto) toast.error("Failed to capture a clear photo. Please ensure camera permission is granted and visible.");
-      return;
-    }
-
-    await processImageAndVerify(imageSrc, isAuto);
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -313,7 +278,7 @@ export function AttendanceKiosk() {
     reader.onload = async () => {
       const base64Image = reader.result as string;
       if (base64Image) {
-        await processImageAndVerify(base64Image, false);
+        await processImageAndVerify(base64Image);
       }
     };
     reader.onerror = () => {
@@ -345,7 +310,92 @@ export function AttendanceKiosk() {
     setCapturedPhoto(null);
     setResult(null);
     setVerifying(false);
-    setIsAutoScanning(false);
+    setCameraReady(true);
+  };
+
+  const handleCapture = async (isAuto = false) => {
+    if (verifying || step !== 'capture' || quotaPaused) return;
+    
+    if (!webcamRef.current) {
+      if (!isAuto) toast.error("Camera system not initialized");
+      return;
+    }
+
+    if (!cameraReady && !isAuto) {
+      toast.error("Please wait for camera to initialize");
+      return;
+    }
+
+    let imageSrc = webcamRef.current.getScreenshot();
+    
+    // Fallback: If react-webcam screenshot fails, try drawing the active video stream directly onto a canvas
+    if (!imageSrc || imageSrc === 'data:,' || imageSrc.length < 100) {
+      try {
+        const videoEl = webcamRef.current.video;
+        if (videoEl && videoEl.readyState >= 2) {
+          const canvas = document.createElement('canvas');
+          canvas.width = videoEl.videoWidth || 640;
+          canvas.height = videoEl.videoHeight || 480;
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            // Apply horizontal reflection if front camera is used (matching mirror setting)
+            if (facingMode === 'user') {
+              ctx.translate(canvas.width, 0);
+              ctx.scale(-1, 1);
+            }
+            ctx.drawImage(videoEl, 0, 0, canvas.width, canvas.height);
+            imageSrc = canvas.toDataURL('image/jpeg', 0.92);
+          }
+        }
+      } catch (err) {
+        console.error("Direct HTML video canvas fallback failed:", err);
+      }
+    }
+
+    // Secondary delay & retry if still null (common during camera startup transient state)
+    if (!imageSrc || imageSrc === 'data:,' || imageSrc.length < 100) {
+      await new Promise(resolve => setTimeout(resolve, 400));
+      imageSrc = webcamRef.current.getScreenshot();
+    }
+    
+    // Ultimate fallback attempt via direct canvas drawing
+    if (!imageSrc || imageSrc === 'data:,' || imageSrc.length < 100) {
+      try {
+        const videoEl = webcamRef.current.video;
+        if (videoEl && videoEl.readyState >= 2) {
+          const canvas = document.createElement('canvas');
+          canvas.width = videoEl.videoWidth || 640;
+          canvas.height = videoEl.videoHeight || 480;
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            if (facingMode === 'user') {
+              ctx.translate(canvas.width, 0);
+              ctx.scale(-1, 1);
+            }
+            ctx.drawImage(videoEl, 0, 0, canvas.width, canvas.height);
+            imageSrc = canvas.toDataURL('image/jpeg', 0.92);
+          }
+        }
+      } catch (err) {
+        console.error("Secondary canvas fallback failed:", err);
+      }
+    }
+
+    if (!imageSrc || imageSrc === 'data:,' || imageSrc.length < 100) {
+      if (!isAuto) {
+        toast.error("Failed to capture a clear photo. Please ensure camera permission is granted and visible.");
+      }
+      return;
+    }
+
+    let finalImage = imageSrc;
+    try {
+      finalImage = await compressImage(imageSrc, 400, 400, 0.72);
+    } catch (compressErr) {
+      console.warn("Capture compression failed, using raw:", compressErr);
+    }
+
+    await processImageAndVerify(finalImage);
   };
 
   const toggleCamera = () => {
@@ -364,102 +414,95 @@ export function AttendanceKiosk() {
             animate={{ opacity: 1 }}
             className="relative w-full h-full flex flex-col items-center justify-center"
           >
-            {/* Scanning Line */}
-            <motion.div 
-              animate={{ top: ['10%', '90%', '10%'] }}
-              transition={{ duration: 4, repeat: Infinity, ease: "linear" }}
-              className="absolute left-[10%] right-[10%] h-[2px] bg-natural-accent shadow-[0_0_15px_var(--color-natural-accent)] z-10 opacity-50" 
-            />
-            
-            <div className="w-[90%] md:w-[85%] h-[80%] md:h-auto md:aspect-[3/4] border-4 border-white/50 rounded-[40px] md:rounded-[120px_120px_100px_100px] relative overflow-hidden bg-black shadow-inner">
-                {!cameraReady && !cameraError && (
-                  <div className="absolute inset-0 flex flex-col items-center justify-center text-white/40 gap-3">
-                    <Loader2 className="animate-spin" size={32} />
-                    <span className="text-[10px] font-black uppercase tracking-widest">Waking Sensor...</span>
-                  </div>
-                )}
-                {cameraError && (
-                  <div className="absolute inset-0 flex flex-col items-center justify-center text-white p-4 text-center gap-2 bg-red-950/80 backdrop-blur-xl z-30 overflow-y-auto">
-                    <div className="p-2 bg-red-500/20 rounded-full shrink-0">
-                      <ShieldAlert className="text-red-400" size={32} />
+            <div className="relative w-full h-full flex flex-col items-center justify-center overflow-hidden">
+              {/* Laser scan line sweep */}
+              {cameraReady && !cameraError && (
+                <motion.div 
+                  animate={{ top: ['15%', '85%', '15%'] }}
+                  transition={{ duration: 4, repeat: Infinity, ease: "linear" }}
+                  className="absolute left-[10%] right-[10%] h-[2px] bg-natural-accent shadow-[0_0_15px_rgba(244,63,94,0.8)] z-20 opacity-60 pointer-events-none" 
+                />
+              )}
+
+              {/* Main camera viewport */}
+              <div className="w-[90%] md:w-[85%] h-[80%] md:h-auto md:aspect-[3/4] border-4 border-white rounded-[40px] md:rounded-[120px_120px_100px_100px] relative overflow-hidden bg-black shadow-inner">
+                {quotaPaused && (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center text-white p-6 text-center gap-4 bg-amber-950/95 z-40 overflow-y-auto">
+                    <div className="p-3 bg-amber-500/20 rounded-full animate-pulse">
+                      <WifiOff className="text-amber-400" size={32} />
                     </div>
-                    <div className="space-y-1 shrink-0">
-                      <span className="text-sm font-black uppercase tracking-tighter block text-red-100">
-                        {isNotHttps ? 'Secure Connection Required' : cameraError?.toLowerCase().includes("denied") || cameraError?.toLowerCase().includes("permission") || permissionState === 'denied' ? 'Camera Denied' : 'Camera Blocked'}
+                    <div className="space-y-1">
+                      <span className="text-xs font-black uppercase tracking-tight block text-amber-300">
+                        एआई कोटा सीमा (Daily Quota Reached)
                       </span>
-                      <p className="text-[10px] text-white/80 font-bold leading-normal max-w-[240px] mx-auto">
-                        Webcam access is constrained. You can troubleshoot below, OR use research backup:
+                      <p className="text-[10px] text-white/95 font-bold leading-normal max-w-[210px] mx-auto">
+                        मुफ़्त जेमिनी एआई लिमिट समाप्त। सिस्टम {Math.floor(quotaCountdown / 60)}m {quotaCountdown % 60}s में फिर से शुरू होगा।
                       </p>
                     </div>
 
-                    {/* Unified Backup File Area with drag/drop and device camera capture support */}
-                    <label 
-                      htmlFor="fallback-file-upload" 
-                      onDragOver={handleDragOver}
-                      onDragLeave={handleDragLeave}
-                      onDrop={handleDrop}
-                      className={`flex flex-col items-center justify-center border-2 border-dashed ${
-                        isDragging ? 'border-natural-accent bg-natural-accent/20 scale-[1.02]' : 'border-white/20 hover:border-white/40 bg-black/40'
-                      } rounded-2xl p-3 cursor-pointer transition-all w-full max-w-[250px] text-center my-1 select-none`}
+                    <div className="flex flex-col gap-1.5 w-full max-w-[215px] bg-black/40 p-3 rounded-2xl border border-white/10 text-left text-[9px] text-white/70">
+                      <p className="font-extrabold text-amber-300 uppercase">💡 त्वरित समाधान (Solution):</p>
+                      <p>1. <b>Register &gt; Config</b> टैब में जाएं</p>
+                      <p>2. वहां अपनी <b>Google Gemini API Key</b> सेव करें</p>
+                      <p>3. उसके बाद असीमित उपस्थिति तुरंत शुरू करें!</p>
+                    </div>
+
+                    <Button 
+                      size="sm" 
+                      onClick={() => setQuotaPaused(false)}
+                      className="bg-amber-600 hover:bg-amber-700 text-white rounded-xl h-9 w-full max-w-[210px] text-[10px] uppercase font-black"
                     >
-                      <Upload className="text-natural-accent animate-bounce mb-1" size={18} />
-                      <span className="text-[10px] font-black tracking-wider uppercase text-yellow-100">
-                        Camera Backup 📷
-                      </span>
-                      <span className="text-[8px] text-white/60 block mt-0.5 leading-normal max-w-[200px]">
-                        Tap to capture with native camera, upload photo, or drag and drop.
-                      </span>
-                      <input 
-                        type="file" 
-                        id="fallback-file-upload" 
-                        accept="image/*" 
-                        className="hidden" 
-                        capture="user"
-                        onChange={handleFileUpload} 
-                      />
-                    </label>
+                      बाईपास करें ({quotaCountdown}s)
+                    </Button>
+                  </div>
+                )}
 
-                    {/* Small divider */}
-                    <div className="w-full max-w-[220px] h-[1px] bg-white/10 my-1 font-mono text-[8px] text-white/40 flex items-center justify-center relative">
-                      <span className="bg-red-950 px-2 absolute">OR USER CONTROLS</span>
+                {!cameraReady && !cameraError && (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center text-white/40 gap-3 z-10 bg-neutral-900">
+                    <Loader2 className="animate-spin text-natural-accent" size={32} />
+                    <span className="text-[10px] font-black uppercase tracking-widest text-neutral-300">कैमरा लोड हो रहा है...</span>
+                  </div>
+                )}
+
+                {cameraError && (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center text-white p-4 text-center gap-3 bg-red-950/95 z-30 overflow-y-auto w-full h-full">
+                    <div className="p-2.5 bg-red-500/20 rounded-full shrink-0">
+                      <ShieldAlert className="text-red-400" size={32} />
+                    </div>
+                    <div className="space-y-1">
+                      <span className="text-xs font-black uppercase tracking-tight block text-red-200">
+                        कैमरा एक्सेस ब्लॉक है (Camera Blocked)
+                      </span>
+                      <p className="text-[10px] text-white/85 font-bold leading-normal max-w-[210px] mx-auto">
+                        सुरक्षा कारणों से आईफ्रेम (iframe) में कैमरा चालू नहीं हो रहा है। उपस्थिति दर्ज करने के लिए नीचे दिए गए विकल्प चुनें:
+                      </p>
                     </div>
 
-                    {/* Troubleshooting options */}
-                    <div className="flex gap-2 w-full max-w-[220px] shrink-0 mt-1">
+                    <div className="flex flex-col gap-2 w-full max-w-[210px] shrink-0">
                       <Button 
                         size="sm" 
-                        className="bg-white hover:bg-white/90 text-red-950 rounded-xl h-8 flex-1 text-[9px] uppercase font-black shadow-md" 
-                        onClick={() => window.location.reload()}
-                      >
-                        Refresh
-                      </Button>
-                      <Button 
-                        size="sm" 
-                        variant="secondary"
-                        className="bg-black/60 text-white border border-white/20 hover:bg-black/80 rounded-xl h-8 flex-1 text-[9px] uppercase font-black" 
                         onClick={() => window.open(window.location.href, '_blank')}
+                        className="bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl h-10 w-full text-[10px] uppercase font-black shadow-md flex items-center justify-center gap-1.5"
                       >
-                        New Tab ↗
+                        <RefreshCw size={12} className="animate-spin" style={{ animationDuration: '3s' }} /> ⚡ नए टैब में खोलें (Instant fix) ↗
                       </Button>
-                    </div>
-
-                    <div className="bg-black/40 p-2 rounded-xl text-[8px] text-left border border-white/5 space-y-1 w-full max-w-[240px] mt-1 shrink-0">
-                      <p className="font-black text-red-300 uppercase underline text-[7px]">Troubleshooting Browser WebRTC:</p>
-                      <p>1. Tap <span className="font-bold underline text-white">"New Tab ↗"</span> below preview to load secure environment.</p>
-                      <p>2. Tap the blocked camera icon 📵 in address bar and set to <span className="font-bold text-green-400">Allow</span>.</p>
+                      <label 
+                        htmlFor="native-gallery-upload"
+                        className="bg-amber-600 hover:bg-amber-700 text-white h-10 rounded-xl flex items-center justify-center gap-1.5 text-[10px] uppercase font-black shadow-md cursor-pointer text-center select-none animate-bounce"
+                      >
+                        <Upload size={12} /> 📸 मोबाईल गैलरी से अपलोड करें
+                      </label>
                     </div>
                   </div>
                 )}
+
+                {/* HTML Webcam Element */}
                 <Webcam
                   audio={false}
                   ref={webcamRef}
                   screenshotFormat="image/jpeg"
-                  className={`w-full h-full object-cover transition-opacity duration-500 ${cameraReady ? 'opacity-100' : 'opacity-0'}`}
-                  videoConstraints={{ 
-                    facingMode,
-                    width: { ideal: 1280 },
-                    height: { ideal: 720 }
-                  }}
+                  className={`w-full h-full object-cover transition-opacity duration-300 ${cameraReady ? 'opacity-100' : 'opacity-0'}`}
+                  videoConstraints={{ facingMode }}
                   mirrored={facingMode === 'user'}
                   screenshotQuality={0.92}
                   imageSmoothing={true}
@@ -471,96 +514,52 @@ export function AttendanceKiosk() {
                   }}
                   onUserMediaError={(err) => {
                     console.error("Webcam Error:", err);
-                    const errMsg = typeof err === 'string' 
-                      ? err 
-                      : (err as any)?.message || (err as any)?.name || "Permission denied";
-                    setCameraError(errMsg);
+                    setCameraError("Camera permission blocked.");
                     setCameraReady(false);
                   }}
                 />
-            </div>
 
-            <div className="absolute top-3 left-3 z-20 flex flex-col gap-2">
-              <Button 
-                onClick={() => setIsAutoScanEnabled(!isAutoScanEnabled)}
-                variant="secondary"
-                className={`rounded-full px-3 md:px-4 h-8 md:h-10 backdrop-blur-md border md:border-2 transition-all flex items-center gap-1.5 md:gap-2 ${
-                  isAutoScanEnabled 
-                  ? 'bg-natural-success/20 border-natural-success/30 text-natural-success' 
-                  : 'bg-white/20 border-white/20 text-white'
-                }`}
-              >
-                <div className={`w-2 h-2 md:w-2.5 md:h-2.5 rounded-full ${isAutoScanEnabled ? 'bg-natural-success animate-pulse' : 'bg-gray-400'}`} />
-                <span className="text-[8px] md:text-[9px] font-black tracking-widest uppercase">
-                  {isAutoScanEnabled ? 'Auto ON' : 'Auto OFF'}
-                </span>
-              </Button>
-
-              <div className={`px-3 md:px-4 py-1 md:py-1.5 rounded-full text-[8px] md:text-[10px] backdrop-blur-md font-black tracking-wider flex items-center gap-1.5 md:gap-2 border whitespace-nowrap shadow-sm group ${quotaPaused ? 'bg-orange-600 text-white border-orange-400' : isOffline ? 'bg-red-600 text-white border-red-400' : 'bg-black/40 text-white border-white/10'}`}>
-                {isOffline ? (
-                   <><WifiOff size={10} className="animate-pulse" /> NETWORK OFFLINE</>
-                ) : quotaPaused ? (
-                  <div className="flex items-center gap-2">
-                    <XCircle size={10} className="animate-pulse" /> 
-                    <span>QUOTA EXHAUSTED ({Math.floor(quotaCountdown / 60)}:{(quotaCountdown % 60).toString().padStart(2, '0')})</span>
-                    <button 
-                      onClick={() => setQuotaPaused(false)}
-                      className="ml-1 bg-white/20 hover:bg-white/40 px-1.5 py-0.5 rounded text-[7px] border border-white/30 transition-colors uppercase"
-                    >
-                      Retry Now
-                    </button>
+                {/* Dynamic Face align contour overlay */}
+                {cameraReady && !cameraError && (
+                  <div className="absolute inset-8 border border-white/20 rounded-[80px_80px_60px_60px] pointer-events-none flex flex-col items-center justify-center">
+                    <div className="w-16 h-16 rounded-full border border-white/10 mt-6" />
+                    <span className="text-[7px] text-white/35 uppercase font-black tracking-[0.2em] mt-auto mb-16">
+                      यहाँ चेहरा संरेखित करें
+                    </span>
                   </div>
-                ) : !isAutoScanEnabled ? (
-                  <><XCircle size={10} className="text-gray-400" /> DISABLED</>
-                ) : isAutoScanning ? (
-                  <><Loader2 size={10} className="animate-spin text-natural-accent" /> CCTV: ANALYZING...</>
-                ) : (
-                  loading ? 'LOADING...' : <><div className="w-1 md:w-1.5 h-1 md:h-1.5 rounded-full bg-natural-success animate-pulse" /> CCTV: MONITORING</>
                 )}
               </div>
-            </div>
 
-            <div className="absolute top-3 right-3 flex flex-col gap-2">
-              <Button 
-                onClick={toggleCamera}
-                variant="secondary"
-                title={facingMode === 'user' ? "Switch Camera" : "Switch Camera"}
-                className={`rounded-full w-10 h-10 md:w-12 md:h-12 p-0 backdrop-blur-md border md:border-2 transition-all ${
-                  facingMode === 'user' 
-                  ? 'bg-natural-primary/20 border-white/20 text-white' 
-                  : 'bg-natural-accent/40 border-natural-accent/50 text-white'
-                }`}
-              >
-                <div className="relative">
-                  <Camera size={20} />
-                  <div className="absolute -top-1 -right-1 bg-white text-black text-[7px] font-black rounded-full w-3.5 h-3.5 flex items-center justify-center border border-black/10">
-                    {facingMode === 'user' ? 'F' : 'B'}
-                  </div>
-                </div>
-              </Button>
-            </div>
-
-            <div className="absolute bottom-4 left-0 right-0 px-4 md:px-6 flex flex-col items-center gap-3 md:gap-4">
-              <Button 
-                 onClick={() => handleCapture(false)} 
-                 disabled={loading || verifying || !cameraReady}
-                 className="w-full h-14 md:h-16 rounded-2xl md:rounded-[28px] bg-gradient-to-r from-natural-accent to-orange-500 hover:from-natural-accent/90 hover:to-orange-600 text-white font-black text-lg md:text-xl shadow-[0_10px_20px_rgba(244,63,94,0.3)] transition-all active:scale-[0.98] border md:border-2 border-white/30 disabled:opacity-50 disabled:grayscale"
-              >
-                {verifying ? (
-                  <><Loader2 size={24} className="mr-2 md:mr-3 animate-spin" /> ANALYZING...</>
-                ) : (
-                  <><Camera size={24} className="mr-2 md:mr-3" /> SCAN NOW</>
+              {/* Bottom Triggers & Upload Controls */}
+              <div className="absolute bottom-3 left-0 right-0 px-4 md:px-6 flex flex-col items-center gap-2.5 z-20 w-full">
+                {cameraReady && !cameraError && (
+                  <Button 
+                    onClick={() => handleCapture(false)} 
+                    disabled={verifying}
+                    className="w-[90%] md:w-[85%] h-12 rounded-xl bg-gradient-to-r from-natural-accent to-orange-500 hover:from-natural-accent/90 hover:to-orange-600 text-white font-black text-xs uppercase shadow-md transition-all active:scale-[0.98] border border-white/20 disabled:opacity-50"
+                  >
+                    {verifying ? (
+                      <><Loader2 size={16} className="mr-2 animate-spin" /> पहचान की जा रही है...</>
+                    ) : (
+                      <><Camera size={16} className="mr-2 animate-bounce" /> 👉 कैमरा से फोटो खींचें (Scan Now) :</>
+                    )}
+                  </Button>
                 )}
-              </Button>
 
-              <p className="text-white/80 text-[8px] md:text-[10px] font-black uppercase tracking-[0.2em] text-center max-w-[280px] drop-shadow-md">
-                {quotaPaused 
-                  ? "SYSTEM COOL DOWN IN PROGRESS"
-                  : isAutoScanEnabled 
-                    ? "POSITION FACE INSIDE FRAME"
-                    : "TAP TO VERIFY IDENTITY"
-                }
-              </p>
+                <label 
+                  htmlFor="native-gallery-upload"
+                  className="w-[90%] md:w-[85%] h-11 rounded-xl bg-white text-natural-primary border border-natural-primary/20 hover:bg-neutral-50 cursor-pointer flex items-center justify-center gap-2 font-black text-xs uppercase shadow-sm active:scale-95 transition-all text-center select-none"
+                >
+                  <Upload size={14} className="text-natural-accent animate-pulse" /> 📸 मोबाइल गैलरी से फोटो अपलोड करें (Gallery)
+                </label>
+                <input 
+                  type="file" 
+                  id="native-gallery-upload" 
+                  accept="image/*" 
+                  className="hidden" 
+                  onChange={handleFileUpload} 
+                />
+              </div>
             </div>
           </motion.div>
         )}
@@ -649,8 +648,8 @@ export function AttendanceKiosk() {
              </div>
              <div className="bg-natural-bg/50 p-3 md:p-4 rounded-xl">
                 <div className="flex justify-between items-center text-xs md:text-sm">
-                  <span className="text-natural-primary/60 font-medium italic">Active Profiles:</span>
-                  <span className="font-bold text-natural-primary">{teachers.length} Professionals</span>
+                   <span className="text-natural-primary/60 font-medium italic">Active Profiles:</span>
+                   <span className="font-bold text-natural-primary">{teachers.length} Professionals</span>
                 </div>
              </div>
           </div>

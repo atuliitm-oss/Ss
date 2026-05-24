@@ -12,11 +12,11 @@ async function startServer() {
   app.use(express.json({ limit: '50mb' }));
 
   // Gemini SDK Setup - Initialized lazily or inside the function
-  const getAi = () => {
-    const key = process.env.GEMINI_API_KEY;
+  const getAi = (customKey?: string) => {
+    const key = customKey || process.env.GEMINI_API_KEY;
     if (!key) {
-      console.error("[API] GEMINI_API_KEY is missing from environment variables!");
-      throw new Error("API Key for AI service is not configured. Please add GEMINI_API_KEY to your app settings.");
+      console.error("[API] GEMINI_API_KEY is missing!");
+      throw new Error("API Key for AI service is not configured. Please add GEMINI_API_KEY to your app settings or enter it in Register > Config.");
     }
     return new GoogleGenAI({ 
       apiKey: key,
@@ -33,14 +33,17 @@ async function startServer() {
     try {
       const { capturedPhotoBase64, teachers, options } = req.body;
       
-      const apiKeyExists = !!process.env.GEMINI_API_KEY;
-      console.log(`[API] Identify request: PhotoLen=${capturedPhotoBase64?.length}, Teachers=${teachers?.length}, KeyExists=${apiKeyExists}`);
+      const clientProvidedKey = req.headers["x-user-gemini-api-key"] || req.headers["x-gemini-api-key"];
+      const actualClientKey = typeof clientProvidedKey === 'string' ? clientProvidedKey.trim() : undefined;
+
+      const apiKeyExists = !!(actualClientKey || process.env.GEMINI_API_KEY);
+      console.log(`[API] Identify request: PhotoLen=${capturedPhotoBase64?.length}, Teachers=${teachers?.length}, CustomKeyInHeader=${!!actualClientKey}, KeyExists=${apiKeyExists}`);
 
       if (!capturedPhotoBase64) {
         return res.status(400).json({ error: "No image data provided. Please capture a photo." });
       }
 
-      const ai = getAi();
+      const ai = getAi(actualClientKey);
 
       // Robust base64 cleaning helper
       const extractBase64 = (dataUrl: string | any) => {
@@ -157,11 +160,13 @@ Output Format: JSON only.
         let lastError: any = null;
         // Preferred models in order of stability and potential quota availability
         const models = [
-          "gemini-flash-latest",
-          "gemini-2.0-flash",
-          "gemini-1.5-flash-latest",
-          "gemini-3-flash-preview",
-          "gemini-3.1-flash-lite"
+          "gemini-2.5-flash",
+          "gemini-1.5-flash",
+          "gemini-1.5-flash-8b",
+          "gemini-2.5-flash-lite",
+          "gemini-3.5-flash",
+          "gemini-3.1-flash-lite",
+          "gemini-flash-latest"
         ];
         
         for (let attempt = 0; attempt <= maxRetries; attempt++) {
