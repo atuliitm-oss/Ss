@@ -478,9 +478,6 @@ export function AttendanceKiosk() {
                       <span className="text-xs md:text-sm font-black uppercase tracking-tight block text-indigo-300 font-sans">
                         चेहरा स्कैन करने के लिए कैमरा खोलें
                       </span>
-                      <p className="text-[9px] text-white/50 font-bold max-w-[210px] mx-auto uppercase">
-                        (Open camera to scan teacher's face)
-                      </p>
                     </div>
 
                     <div className="flex flex-col gap-2.5 w-full max-w-[220px] px-2 shrink-0">
@@ -568,20 +565,26 @@ export function AttendanceKiosk() {
 
                         <div className="flex flex-col gap-1.5 w-full max-w-[210px] shrink-0">
                           <Button 
+                            onClick={handleUploadWithPinCheck}
+                            className="bg-white hover:bg-neutral-50 text-neutral-800 rounded-xl h-9 w-full text-[9px] uppercase font-black shadow-md flex items-center justify-center gap-1.5 border-none"
+                          >
+                            <Upload size={13} className="text-indigo-600" /> 📸 फोटो अपलोड करें (Gallery)
+                          </Button>
+                          <Button 
                             size="sm" 
                             onClick={() => {
                               setCameraError(null);
                               setCameraReady(false);
                               setCameraRetryKey(prev => prev + 1);
                             }}
-                            className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl h-9 w-full text-[9px] uppercase font-black shadow-md flex items-center justify-center gap-1 border-none"
+                            className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl h-9 w-full text-[9px] uppercase font-black shadow-sm flex items-center justify-center gap-1 border-none"
                           >
                             🔄 पुनः प्रयास करें (Retry Camera)
                           </Button>
                           <Button 
                             size="sm" 
                             onClick={() => window.open(window.location.href, '_blank')}
-                            className="bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-700 hover:to-green-700 text-white rounded-xl h-9 w-full text-[9px] uppercase font-black shadow-md flex items-center justify-center gap-1 border-none"
+                            className="bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-700 hover:to-green-700 text-white rounded-xl h-9 w-full text-[9px] uppercase font-black shadow-sm flex items-center justify-center gap-1 border-none"
                           >
                             ⚡ नए टैब में खोलें (Open in New Tab) ↗
                           </Button>
@@ -593,7 +596,7 @@ export function AttendanceKiosk() {
                               setCameraError(null);
                             }}
                             variant="secondary"
-                            className="text-neutral-700 bg-white hover:bg-neutral-100 rounded-xl h-9 w-full text-[9px] uppercase font-black shadow-sm flex items-center justify-center gap-1 border border-neutral-200"
+                            className="text-neutral-700 bg-white hover:bg-neutral-100 rounded-xl h-9 w-full text-[9px] uppercase font-black shadow-xs flex items-center justify-center gap-1 border border-neutral-200"
                           >
                             पीछे जाएं (Go Back)
                           </Button>

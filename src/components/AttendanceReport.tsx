@@ -155,11 +155,16 @@ export function AttendanceReport() {
       message += `👥 *Total Present:* ${logs.length}\n\n`;
       message += `*PRESENT STAFF LIST:*\n`;
       
-      const teacherIdsOnSelectedDay = logs.filter(l => l.date === selectedDate);
+      const teacherIdsOnSelectedDay = [...logs.filter(l => l.date === selectedDate)].sort((a, b) => {
+        const idA = String(a.teacherId || '').trim();
+        const idB = String(b.teacherId || '').trim();
+        return idA.localeCompare(idB, undefined, { numeric: true, sensitivity: 'base' });
+      });
       teacherIdsOnSelectedDay.forEach((log, index) => {
         const name = String(log.teacherName || 'Unknown').toUpperCase();
+        const empId = String(log.teacherId || 'N/A').toUpperCase();
         const time = log.timestamp?.toDate ? format(log.timestamp.toDate(), 'HH:mm a') : 'N/A';
-        message += `${index + 1}. *${name}* - (${log.teacherId || 'N/A'}) - Time: ${time}\n`;
+        message += `${index + 1}. *${name}* (ID: ${empId}) - Time: ${time}\n`;
       });
 
       window.open(`https://wa.me/?text=${encodeURIComponent(message)}`, '_blank');
@@ -175,9 +180,15 @@ export function AttendanceReport() {
       message += `❌ *Total Absent:* ${absent.length}\n\n`;
       message += `*ABSENT STAFF LIST:*\n`;
       
-      absent.forEach((teacher, index) => {
+      const sortedAbsent = [...absent].sort((a, b) => {
+        const idA = String(a.id || '').trim();
+        const idB = String(b.id || '').trim();
+        return idA.localeCompare(idB, undefined, { numeric: true, sensitivity: 'base' });
+      });
+      sortedAbsent.forEach((teacher, index) => {
         const name = String(teacher.name || 'Unknown').toUpperCase();
-        message += `${index + 1}. *${name}* (${teacher.id || 'N/A'}) - Dept: ${teacher.department || 'N/A'}\n`;
+        const empId = String(teacher.id || 'N/A').toUpperCase();
+        message += `${index + 1}. *${name}* (ID: ${empId}) - Dept: ${teacher.department || 'N/A'}\n`;
       });
 
       window.open(`https://wa.me/?text=${encodeURIComponent(message)}`, '_blank');
@@ -223,8 +234,14 @@ export function AttendanceReport() {
         };
       });
 
-      // 3. Add data rows
-      allTeachers.forEach((teacher, teacherIdx) => {
+      // 3. Add data rows (Sorted by Employee ID)
+      const sortedTeachersForExcel = [...allTeachers].sort((a, b) => {
+        const idA = String(a.id || '').trim();
+        const idB = String(b.id || '').trim();
+        return idA.localeCompare(idB, undefined, { numeric: true, sensitivity: 'base' });
+      });
+
+      sortedTeachersForExcel.forEach((teacher, teacherIdx) => {
         const teacherId = String(teacher.id || '').trim().toUpperCase();
         const teacherLogs = logs.filter(l => String(l.teacherId || '').trim().toUpperCase() === teacherId);
         
@@ -581,8 +598,14 @@ export function AttendanceReport() {
                     </tr>
                   </thead>
                   <tbody>
-                    {allTeachers.map((teacher, idx) => {
-                      const teacherId = String(teacher.id || '').trim().toUpperCase();
+                    {[...allTeachers]
+                      .sort((a, b) => {
+                        const idA = String(a.id || '').trim();
+                        const idB = String(b.id || '').trim();
+                        return idA.localeCompare(idB, undefined, { numeric: true, sensitivity: 'base' });
+                      })
+                      .map((teacher, idx) => {
+                        const teacherId = String(teacher.id || '').trim().toUpperCase();
                       const teacherLogs = logs.filter(l => String(l.teacherId || '').trim().toUpperCase() === teacherId);
                       
                       return (
