@@ -6,7 +6,7 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import Webcam from 'react-webcam';
 import { motion, AnimatePresence } from 'motion/react';
-import { Camera, Upload, UserPlus, CheckCircle2, XCircle, Loader2, Users, FileText, Plus, Trash2, Edit2, Save, X, Settings, Shield, Sliders, Lock, KeyRound, WifiOff, ShieldAlert } from 'lucide-react';
+import { Camera, Upload, UserPlus, CheckCircle2, XCircle, Loader2, Users, FileText, Plus, Trash2, Edit2, Save, X, Settings, Shield, Sliders, Lock, KeyRound, WifiOff, ShieldAlert, Volume2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -52,6 +52,7 @@ export function TeacherRegistration() {
   const [matchThreshold, setMatchThreshold] = useState(0.8);
   const [livenessSensitivity, setLivenessSensitivity] = useState(0.5);
   const [compressionQuality, setCompressionQuality] = useState(0.7);
+  const [voiceAnnouncementsEnabled, setVoiceAnnouncementsEnabled] = useState(true);
   const [savingSettings, setSavingSettings] = useState(false);
   const [clientGeminiApiKey, setClientGeminiApiKey] = useState(() => {
     return localStorage.getItem("VITE_GEMINI_API_KEY") || localStorage.getItem("GEMINI_API_KEY") || "";
@@ -104,6 +105,7 @@ export function TeacherRegistration() {
         if (data.matchThreshold !== undefined) setMatchThreshold(data.matchThreshold);
         if (data.livenessSensitivity !== undefined) setLivenessSensitivity(data.livenessSensitivity);
         if (data.compressionQuality !== undefined) setCompressionQuality(data.compressionQuality);
+        if (data.voiceAnnouncementsEnabled !== undefined) setVoiceAnnouncementsEnabled(data.voiceAnnouncementsEnabled);
         if (data.adminPin) setAdminPin(data.adminPin);
       }
     } catch (error) {
@@ -134,6 +136,7 @@ export function TeacherRegistration() {
         matchThreshold,
         livenessSensitivity,
         compressionQuality,
+        voiceAnnouncementsEnabled,
         adminPin,
         updatedAt: serverTimestamp()
       });
@@ -627,6 +630,30 @@ export function TeacherRegistration() {
                 <span>Fast Save</span>
                 <span>Crystal Clear</span>
               </div>
+            </div>
+
+            <div className="p-4 bg-neutral-50/50 hover:bg-neutral-50 border border-neutral-100/80 rounded-2xl flex items-center justify-between transition-all">
+              <div className="space-y-1 pr-4">
+                <Label className="text-sm font-bold text-natural-primary flex items-center gap-2">
+                  <Volume2 size={16} className="text-indigo-600" /> Voice Announcements
+                </Label>
+                <p className="text-[10px] text-natural-primary/40 font-medium tracking-wide">
+                  Speak teacher's name with speech synthesis upon successful attendance check.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setVoiceAnnouncementsEnabled(!voiceAnnouncementsEnabled)}
+                className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:ring-offset-2 ${
+                  voiceAnnouncementsEnabled ? 'bg-indigo-600' : 'bg-neutral-200'
+                }`}
+              >
+                <span
+                  className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                    voiceAnnouncementsEnabled ? 'translate-x-5' : 'translate-x-0'
+                  }`}
+                />
+              </button>
             </div>
 
             <div className="p-4 bg-amber-50 border border-amber-100 rounded-2xl">

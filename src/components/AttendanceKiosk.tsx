@@ -23,7 +23,17 @@ export function AttendanceKiosk() {
   const [teachers, setTeachers] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [verifying, setVerifying] = useState(false);
-  const [aiSettings, setAiSettings] = useState<{ matchThreshold: number, livenessSensitivity: number, compressionQuality: number }>({ matchThreshold: 0.8, livenessSensitivity: 0.5, compressionQuality: 0.7 });
+  const [aiSettings, setAiSettings] = useState<{ 
+    matchThreshold: number, 
+    livenessSensitivity: number, 
+    compressionQuality: number,
+    voiceAnnouncementsEnabled?: boolean
+  }>({ 
+    matchThreshold: 0.8, 
+    livenessSensitivity: 0.5, 
+    compressionQuality: 0.7,
+    voiceAnnouncementsEnabled: true 
+  });
   const [result, setResult] = useState<{ 
     isMatch: boolean; 
     isLivePerson: boolean;
@@ -59,6 +69,42 @@ export function AttendanceKiosk() {
 
   const webcamRef = useRef<Webcam>(null);
   const resetTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  const speakTeacherName = (name: string, isAlreadyMarked: boolean) => {
+    if (aiSettings.voiceAnnouncementsEnabled === false) {
+      return;
+    }
+    if ('speechSynthesis' in window) {
+      try {
+        window.speechSynthesis.cancel();
+        
+        const cleanName = name.replace(/[^a-zA-Z0-9\s\u0900-\u097F]/g, '');
+        const messageText = isAlreadyMarked 
+          ? `Welcome back, ${cleanName}. Your attendance is already marked.` 
+          : `Thank you, ${cleanName}. Your attendance has been marked successfully.`;
+          
+        const utterance = new SpeechSynthesisUtterance(messageText);
+        
+        const voices = window.speechSynthesis.getVoices();
+        const preferredVoice = voices.find(v => 
+          v.lang.includes('en-IN') || 
+          v.lang.includes('hi-IN') || 
+          v.lang.includes('en-US')
+        );
+        
+        if (preferredVoice) {
+          utterance.voice = preferredVoice;
+        }
+        
+        utterance.rate = 0.9;
+        utterance.pitch = 1.0;
+        
+        window.speechSynthesis.speak(utterance);
+      } catch (err) {
+        console.error("Speech synthesis error:", err);
+      }
+    }
+  };
 
   useEffect(() => {
     fetchTeachers();
@@ -101,7 +147,8 @@ export function AttendanceKiosk() {
         setAiSettings({
           matchThreshold: data.matchThreshold ?? 0.8,
           livenessSensitivity: data.livenessSensitivity ?? 0.5,
-          compressionQuality: data.compressionQuality ?? 0.7
+          compressionQuality: data.compressionQuality ?? 0.7,
+          voiceAnnouncementsEnabled: data.voiceAnnouncementsEnabled ?? true
         });
         if (data.adminPin) {
           setAdminPin(data.adminPin);
@@ -234,6 +281,7 @@ export function AttendanceKiosk() {
             reason: "Attendance already on record for today."
           });
           toast.info("Already marked today");
+          speakTeacherName(matchResult.name || teacher?.name || 'Unknown', true);
           return;
         }
 
@@ -251,6 +299,7 @@ export function AttendanceKiosk() {
         setResult(matchResult);
         setStep('result');
         toast.success(`Welcome, ${matchResult.name}`);
+        speakTeacherName(matchResult.name || teacher?.name || 'Unknown', false);
       } else {
         setStep('result');
         setResult(matchResult);
