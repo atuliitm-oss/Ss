@@ -905,6 +905,7 @@ export function TeacherRegistration() {
                       console.error("Webcam Error:", err);
                       setCameraError("Camera Access Denied or Busy");
                       setCameraReady(false);
+                      toast.error("Camera access denied! Try clicking 'Open in New Tab' to prompt and allow browser camera access.");
                     }}
                     onResize={() => {}}
                     imageSmoothing={true}
@@ -1085,7 +1086,7 @@ export function TeacherRegistration() {
                               setCameraError("Camera Access Denied or Busy");
                               setCameraReady(false);
                               setIsCapturingEdit(false);
-                              toast.error("Camera access denied");
+                              toast.error("Camera access denied! Please open the app in a new tab if you are inside an iframe wrapper.");
                             }}
                             imageSmoothing={true}
                             forceScreenshotSourceSize={false}

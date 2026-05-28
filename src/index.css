@@ -1,19 +1,37 @@
 @import "tailwindcss";
 @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,200..800;1,200..800&display=swap');
 
+:root {
+  --natural-bg: #f5f7ff;
+  --natural-primary: #6366f1;
+  --natural-accent: #f43f5e;
+  --natural-text: #1e1b4b;
+  --natural-success: #10b981;
+  --natural-card: #ffffff;
+}
+
+.dark {
+  --natural-bg: #090a10;
+  --natural-primary: #818cf8;
+  --natural-accent: #f43f5e;
+  --natural-text: #f1f3f9;
+  --natural-success: #34d399;
+  --natural-card: #141824;
+}
+
 @theme {
   --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
   
-  --color-natural-bg: #f5f7ff;
-  --color-natural-primary: #6366f1;
-  --color-natural-accent: #f43f5e;
-  --color-natural-text: #1e1b4b;
-  --color-natural-success: #10b981;
-  --color-natural-card: #ffffff;
+  --color-natural-bg: var(--natural-bg);
+  --color-natural-primary: var(--natural-primary);
+  --color-natural-accent: var(--natural-accent);
+  --color-natural-text: var(--natural-text);
+  --color-natural-success: var(--natural-success);
+  --color-natural-card: var(--natural-card);
 }
 
 body {
-  @apply antialiased bg-natural-bg text-natural-text;
+  @apply antialiased bg-natural-bg text-natural-text transition-colors duration-300;
 }
 
 .mirror-mode {
@@ -156,6 +174,54 @@ body {
     --sidebar-accent-foreground: oklch(0.985 0 0);
     --sidebar-border: oklch(1 0 0 / 10%);
     --sidebar-ring: oklch(0.556 0 0);
+}
+
+.dark {
+  .bg-white {
+    background-color: var(--natural-card) !important;
+  }
+  .bg-white\/80 {
+    background-color: rgba(20, 24, 36, 0.85) !important;
+  }
+  .bg-white\/70 {
+    background-color: rgba(20, 24, 36, 0.75) !important;
+  }
+  .bg-white\/50 {
+    background-color: rgba(20, 24, 36, 0.55) !important;
+  }
+  .bg-white\/90 {
+    background-color: rgba(20, 24, 36, 0.90) !important;
+  }
+  .bg-neutral-50, .bg-neutral-50\/50 {
+    background-color: #1a1e2a !important;
+  }
+  .bg-neutral-100 {
+    background-color: #272e3f !important;
+  }
+  .text-natural-primary\/40 {
+    color: rgba(241, 243, 249, 0.4) !important;
+  }
+  .text-natural-primary\/30 {
+    color: rgba(241, 243, 249, 0.3) !important;
+  }
+  .text-natural-primary\/10 {
+    color: rgba(241, 243, 249, 0.1) !important;
+  }
+  .border-neutral-100\/80, .border-neutral-200, .border-black\/5, .border-black\/\[0\.05\], .border-black\/\[0\.08\] {
+    border-color: rgba(255, 255, 255, 0.08) !important;
+  }
+  .text-neutral-850, .text-neutral-800, .text-neutral-700 {
+    color: #cbd5e1 !important;
+  }
+  .text-neutral-600 {
+    color: #94a3b8 !important;
+  }
+  input, select, textarea {
+    color: var(--natural-text) !important;
+  }
+  input::placeholder {
+    color: rgba(241, 243, 249, 0.3) !important;
+  }
 }
 
 @layer base {

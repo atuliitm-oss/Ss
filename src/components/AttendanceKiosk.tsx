@@ -674,6 +674,10 @@ export function AttendanceKiosk() {
                         console.error("Webcam Error:", err);
                         setCameraError("Camera permission blocked.");
                         setCameraReady(false);
+                        toast.error(
+                          "Camera Access Denied! Please click 'Open in New Tab' to prompt Google Chrome camera permissions, or use the Upload option below.",
+                          { duration: 6000 }
+                        );
                       }}
                     />
 

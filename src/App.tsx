@@ -9,13 +9,30 @@ import { TeacherRegistration } from './components/TeacherRegistration';
 import { AttendanceKiosk } from './components/AttendanceKiosk';
 import { AttendanceReport } from './components/AttendanceReport';
 import { Toaster } from "@/components/ui/sonner";
-import { UserCheck, Settings, BarChart3, School, WifiOff, Globe, AlertCircle, RefreshCw, KeyRound, Lock, ArrowRight, Loader2, ShieldAlert } from 'lucide-react';
+import { UserCheck, Settings, BarChart3, School, WifiOff, Globe, AlertCircle, RefreshCw, KeyRound, Lock, ArrowRight, Loader2, ShieldAlert, Sun, Moon } from 'lucide-react';
 import { db } from './lib/firebase';
 import { doc, getDoc, setDoc, getDocFromServer } from 'firebase/firestore';
 import { motion, AnimatePresence } from 'motion/react';
 import { toast } from 'sonner';
 
 export default function App() {
+  const [dark, setDark] = React.useState(() => {
+    const saved = localStorage.getItem('theme');
+    if (saved === 'dark') return true;
+    if (saved === 'light') return false;
+    return window.matchMedia('(prefers-color-scheme: dark)').matches;
+  });
+
+  React.useEffect(() => {
+    if (dark) {
+      document.documentElement.classList.add('dark');
+      localStorage.setItem('theme', 'dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+      localStorage.setItem('theme', 'light');
+    }
+  }, [dark]);
+
   const [activeTab, setActiveTab] = React.useState('attendance');
   const [isOnline, setIsOnline] = React.useState(window.navigator.onLine);
   const [isNotHttps, setIsNotHttps] = React.useState(false);
@@ -185,8 +202,21 @@ export default function App() {
             </div>
           </div>
           
-          <div className="hidden md:flex items-center gap-6 text-right">
-            <div>
+          <div className="flex items-center gap-4 md:gap-6">
+            {/* Dark Mode Toggle Button */}
+            <button
+              onClick={() => setDark(!dark)}
+              className="p-2.5 rounded-xl bg-neutral-100 hover:bg-neutral-200 dark:bg-neutral-800/80 dark:hover:bg-neutral-800 text-natural-primary flex items-center justify-center cursor-pointer shadow-sm border border-black/[0.04] dark:border-white/[0.08] transition-all"
+              title={dark ? "Switch to Light Mode" : "Switch to Dark Mode"}
+            >
+              {dark ? (
+                <Sun size={18} className="text-amber-400 animate-[spin_10s_linear_infinite]" />
+              ) : (
+                <Moon size={18} className="text-indigo-600" />
+              )}
+            </button>
+
+            <div className="hidden md:flex flex-col text-right">
               <p className="text-2xl font-light text-natural-primary">
                 {new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
               </p>
