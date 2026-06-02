@@ -36,6 +36,7 @@ export default function App() {
   const [activeTab, setActiveTab] = React.useState('attendance');
   const [isOnline, setIsOnline] = React.useState(window.navigator.onLine);
   const [isNotHttps, setIsNotHttps] = React.useState(false);
+  const [isIframe, setIsIframe] = React.useState(false);
   const [firestoreStatus, setFirestoreStatus] = React.useState<'checking' | 'connected' | 'disconnected'>('checking');
   
   // Authentication state for restricted tabs
@@ -94,6 +95,11 @@ export default function App() {
     // Check for HTTPS (necessary for camera)
     if (window.location.protocol !== 'https:' && window.location.hostname !== 'localhost') {
       setIsNotHttps(true);
+    }
+
+    // Set inside-iframe flag
+    if (window.self !== window.top) {
+      setIsIframe(true);
     }
     
     const handleOnline = () => setIsOnline(true);
@@ -178,6 +184,25 @@ export default function App() {
           >
             <ShieldAlert size={14} className="text-red-500" />
             <span>CRITICAL: CAMERA REQUIRES HTTPS. Your connection is NOT secure.</span>
+          </motion.div>
+        )}
+        {isIframe && (
+          <motion.div 
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            className="bg-indigo-600 text-white text-[11px] font-bold py-2 px-4 flex items-center justify-center gap-3 sticky top-0 z-[60] shadow-lg text-center"
+          >
+            <Globe size={14} className="animate-pulse flex-shrink-0" />
+            <span>
+              Webcam initially blocked in browser frame? 👉 Click 
+              <button 
+                onClick={() => window.open(window.location.href, '_blank')} 
+                className="underline font-black bg-white/20 hover:bg-white/35 px-2 py-0.5 rounded ml-1 text-[10px] uppercase cursor-pointer"
+              >
+                "Open in New Tab" ↗
+              </button> 
+              to permit official Google Chrome camera permissions.
+            </span>
           </motion.div>
         )}
       </AnimatePresence>
