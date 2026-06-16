@@ -6,7 +6,7 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import Webcam from 'react-webcam';
 import { motion, AnimatePresence } from 'motion/react';
-import { Camera, Upload, UserPlus, CheckCircle2, XCircle, Loader2, Users, FileText, Plus, Trash2, Edit2, Save, X, Settings, Shield, Sliders, Lock, KeyRound, WifiOff, ShieldAlert, Volume2 } from 'lucide-react';
+import { Camera, Upload, UserPlus, CheckCircle2, XCircle, Loader2, Users, FileText, Plus, Trash2, Edit2, Save, X, Settings, Shield, Sliders, Lock, KeyRound, WifiOff, ShieldAlert, Volume2, Clock } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -53,6 +53,8 @@ export function TeacherRegistration() {
   const [livenessSensitivity, setLivenessSensitivity] = useState(0.5);
   const [compressionQuality, setCompressionQuality] = useState(0.7);
   const [voiceAnnouncementsEnabled, setVoiceAnnouncementsEnabled] = useState(true);
+  const [schoolStartTime, setSchoolStartTime] = useState('08:00');
+  const [schoolEndTime, setSchoolEndTime] = useState('14:00');
   const [savingSettings, setSavingSettings] = useState(false);
   const [clientGeminiApiKey, setClientGeminiApiKey] = useState(() => {
     return localStorage.getItem("VITE_GEMINI_API_KEY") || localStorage.getItem("GEMINI_API_KEY") || "";
@@ -106,6 +108,8 @@ export function TeacherRegistration() {
         if (data.livenessSensitivity !== undefined) setLivenessSensitivity(data.livenessSensitivity);
         if (data.compressionQuality !== undefined) setCompressionQuality(data.compressionQuality);
         if (data.voiceAnnouncementsEnabled !== undefined) setVoiceAnnouncementsEnabled(data.voiceAnnouncementsEnabled);
+        if (data.schoolStartTime !== undefined) setSchoolStartTime(data.schoolStartTime);
+        if (data.schoolEndTime !== undefined) setSchoolEndTime(data.schoolEndTime);
         if (data.adminPin) setAdminPin(data.adminPin);
       }
     } catch (error) {
@@ -137,6 +141,8 @@ export function TeacherRegistration() {
         livenessSensitivity,
         compressionQuality,
         voiceAnnouncementsEnabled,
+        schoolStartTime,
+        schoolEndTime,
         adminPin,
         updatedAt: serverTimestamp()
       });
@@ -238,6 +244,20 @@ export function TeacherRegistration() {
 
   const toggleCamera = () => {
     setFacingMode(prev => prev === 'user' ? 'environment' : 'user');
+  };
+
+  const handleStartCamera = () => {
+    setIsCapturing(true);
+    setCameraReady(false);
+    setCameraError(null);
+    setCameraRetryKey(prev => prev + 1);
+  };
+
+  const handleStartCameraEdit = () => {
+    setIsCapturingEdit(true);
+    setCameraReady(false);
+    setCameraError(null);
+    setCameraRetryKey(prev => prev + 1);
   };
 
   const handleRegister = async () => {
@@ -498,7 +518,7 @@ export function TeacherRegistration() {
         </Button>
       </div>
 
-      <Card className="w-full max-w-xl mx-auto natural-card border-none overflow-hidden shadow-2xl">
+      <Card className="w-full max-w-2xl mx-auto natural-card border-none overflow-hidden shadow-2xl">
       <CardHeader className="bg-natural-bg/50 p-4 md:p-6 border-b border-black/[0.03]">
         <div className="flex items-center gap-3 md:gap-4">
           <div className="p-2.5 md:p-3 bg-gradient-to-br from-natural-primary to-indigo-600 rounded-xl md:rounded-2xl text-white shadow-lg">
@@ -654,6 +674,36 @@ export function TeacherRegistration() {
                   }`}
                 />
               </button>
+            </div>
+
+            {/* School Working Hours Panel */}
+            <div className="p-5 bg-indigo-50/40 border border-indigo-100/60 rounded-2xl space-y-4">
+              <Label className="text-sm font-bold text-natural-primary flex items-center gap-2">
+                <Clock size={16} className="text-indigo-600" /> School Working Hours / स्कूल का समय
+              </Label>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <span className="text-[9px] font-black uppercase text-indigo-700 block tracking-wider">Start Time (स्कूल शुरू समय)</span>
+                  <input
+                    type="time"
+                    value={schoolStartTime}
+                    onChange={(e) => setSchoolStartTime(e.target.value)}
+                    className="w-full h-11 px-3 bg-white border border-indigo-100 rounded-xl font-bold text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <span className="text-[9px] font-black uppercase text-indigo-700 block tracking-wider">End Time (स्कूल बंद समय)</span>
+                  <input
+                    type="time"
+                    value={schoolEndTime}
+                    onChange={(e) => setSchoolEndTime(e.target.value)}
+                    className="w-full h-11 px-3 bg-white border border-indigo-100 rounded-xl font-bold text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                  />
+                </div>
+              </div>
+              <p className="text-[9px] text-cyan-600 font-bold leading-normal">
+                💡 आगमन का समय स्वागत घोषणा (आपका स्वागत है) एवं प्रस्थान समय के पश्चात की चेक-इन को "आउट टाइम" रिकॉर्ड करने और विदाई घोषणा करने में उपयोगी है।
+              </p>
             </div>
 
             <div className="p-4 bg-amber-50 border border-amber-100 rounded-2xl">
@@ -820,75 +870,132 @@ export function TeacherRegistration() {
 
         {(activeTab === 'single' || selectedBulkIndex !== null) && (
           <div className="space-y-4">
-            <Label className="text-[10px] font-black text-amber-500 uppercase tracking-widest ml-1 flex items-center gap-2">
-               <div className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" /> 
-               {activeTab === 'single' ? 'Facial Identity Profile' : `Photo for: ${bulkEntries[selectedBulkIndex!]?.name}`}
+            <Label className="text-[10px] font-black text-emerald-500 uppercase tracking-widest ml-1 flex items-center gap-2">
+               <div className="w-2 h-2 rounded-full bg-emerald-500 animate-[pulse_1.5s_infinite]" /> 
+               {activeTab === 'single' ? 'FACIAL IDENTITY PROFILE / चेहरा प्रोफाइल' : `Photo for: ${bulkEntries[selectedBulkIndex!]?.name}`}
             </Label>
             
-            <div className="relative aspect-[3/4] rounded-[32px] overflow-hidden bg-[#e8e4db] border-[6px] border-white shadow-xl flex items-center justify-center">
+            <div className="relative aspect-[4/3] rounded-[36px] overflow-hidden bg-[#0d1527] border-4 border-[#06b6d4]/40 shadow-[0_25px_60px_-15px_rgba(0,0,0,0.85),_0_0_40px_rgba(6,182,212,0.18)] flex items-center justify-center transition-all duration-300 ring-8 ring-[#06b6d4]/5">
               {isCapturing ? (
                 <div className="relative w-full h-full bg-black">
                   {!cameraReady && !cameraError && (
-                    <div className="absolute inset-0 flex flex-col items-center justify-center text-white/40 gap-3">
-                      <Loader2 className="animate-spin" size={32} />
-                      <span className="text-[10px] font-black uppercase tracking-widest">Waking Sensor...</span>
+                    <div className="absolute inset-0 flex flex-col items-center justify-center text-white/40 gap-3 z-10">
+                      <Loader2 className="animate-spin text-cyan-400" size={36} />
+                      <span className="text-[10px] font-black uppercase tracking-widest text-cyan-400/80">Waking Biometric Sensor...</span>
                     </div>
                   )}
                   {cameraError && (
-                    <div className="absolute inset-0 flex flex-col items-center justify-center text-white p-6 text-center gap-4 bg-red-950/60 backdrop-blur-xl z-20">
-                      <div className="p-3 bg-red-500/20 rounded-full">
+                    <div className="absolute inset-0 flex flex-col items-center justify-center text-white p-6 text-center gap-4 bg-red-950/80 backdrop-blur-xl z-30">
+                      <div className="p-3 bg-red-500/20 rounded-full animate-bounce">
                         <ShieldAlert className="text-red-400" size={32} />
                       </div>
                       <div className="space-y-1">
-                        <span className="text-sm font-black uppercase tracking-tight block">Camera Blocked</span>
+                        <span className="text-sm font-black uppercase tracking-tight block text-red-400">Camera Access Blocked</span>
                         <div className="space-y-3">
-                          <p className="text-[10px] text-white/80 font-bold leading-tight max-w-[200px] mx-auto">
-                            Access to your camera was denied. This is usually due to browser security settings or being inside a restricted frame.
+                          <p className="text-[10px] text-white/80 font-bold leading-tight max-w-[240px] mx-auto">
+                            Access to your camera was denied within the preview frame. Tap "Open in New Tab" to grant permission.
                           </p>
-                          <div className="bg-black/40 p-3 rounded-xl text-[9px] text-left border border-white/10 space-y-2">
-                            <p className="font-black text-red-300 uppercase underline">Troubleshooting:</p>
+                          <div className="bg-black/60 p-3.5 rounded-xl text-[9px] text-left border border-white/15 space-y-2 max-w-[260px] mx-auto">
+                            <p className="font-black text-red-300 uppercase underline">Simple Fix:</p>
                             <p>1. Tap the <span className="font-bold underline text-white">"Open in New Tab"</span> button below.</p>
-                            <p>2. Check for a <span className="font-bold underline text-white">blocked camera icon</span> 📵 in the address bar.</p>
-                            <p>3. Go to <span className="font-bold underline text-white">Browser Settings</span> → Site Settings → Camera and ensure it is <span className="font-bold text-green-400">Allowed</span>.</p>
+                            <p>2. Allow camera access 📵 when prompted by your browser.</p>
                           </div>
                         </div>
                       </div>
-                      <div className="flex flex-col gap-2 w-full max-w-[180px]">
+                      <div className="grid grid-cols-2 gap-2 w-full max-w-[260px] pt-2">
                         <Button 
                           size="sm" 
-                          className="bg-indigo-600 text-white hover:bg-indigo-700 rounded-xl h-10 w-full text-[10px] uppercase font-black" 
+                          className="bg-indigo-600 text-white hover:bg-indigo-700 rounded-xl h-10 text-[9px] uppercase font-black border-none" 
                           onClick={() => {
                             setCameraError(null);
                             setCameraReady(false);
                             setCameraRetryKey(prev => prev + 1);
                           }}
                         >
-                          🔄 Retry Camera
+                          🔄 Retry
                         </Button>
                         <Button 
                           size="sm" 
-                          className="bg-white text-red-950 hover:bg-white/90 rounded-xl h-10 w-full text-[10px] uppercase font-black" 
-                          onClick={() => window.location.reload()}
-                        >
-                          Refresh Page
-                        </Button>
-                        <Button 
-                          size="sm" 
-                          variant="secondary"
-                          className="bg-black/40 text-white border border-white/20 hover:bg-black/60 rounded-xl h-10 w-full text-[10px] uppercase font-black" 
+                          className="bg-emerald-600 text-white hover:bg-emerald-700 rounded-xl h-10 text-[9px] uppercase font-black border-none" 
                           onClick={() => window.open(window.location.href, '_blank')}
                         >
-                          Open in New Tab ↗
+                          Open New Tab ↗
                         </Button>
                         <label 
                           htmlFor="photo-upload"
-                          className="bg-amber-600 hover:bg-amber-700 text-white h-10 rounded-xl flex items-center justify-center gap-1.5 text-[10px] uppercase font-black shadow-md cursor-pointer text-center select-none"
+                          className="col-span-2 bg-amber-600 hover:bg-amber-700 text-white h-10 rounded-xl flex items-center justify-center gap-1.5 text-[9px] uppercase font-black shadow-md cursor-pointer text-center select-none"
                         >
                           <Upload size={12} /> Gallery Upload
                         </label>
                       </div>
                     </div>
                   )}
+
+                  {/* Top HUD indicator & Quick toggles */}
+                  {cameraReady && !cameraError && (
+                    <div className="absolute top-4 left-4 right-4 flex justify-between items-center z-30 pointer-events-auto">
+                      <div className="bg-black/85 backdrop-blur-md px-3.5 py-1.5 rounded-full border border-emerald-500/30 flex items-center gap-2 shadow-lg">
+                        <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
+                        <span className="text-[8.5px] font-black tracking-widest text-emerald-400 uppercase font-mono">
+                          {facingMode === 'user' ? 'SEALER FRONT CAMERA (सेल्फ़ी)' : 'SEALER BACK CAMERA (कैमरा)'}
+                        </span>
+                      </div>
+                      <div className="flex gap-2">
+                        <Button 
+                          onClick={toggleCamera}
+                          variant="secondary"
+                          type="button"
+                          className="h-8 w-8 rounded-full bg-black/80 hover:bg-neutral-900 border border-white/10 text-white p-0 shadow-lg flex items-center justify-center transition-transform active:scale-90 cursor-pointer"
+                          title="कैमरा बदलें (Switch Camera)"
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
+                        </Button>
+                        <Button 
+                          onClick={() => {
+                            setIsCapturing(false);
+                            setCameraReady(false);
+                            setCameraError(null);
+                          }}
+                          variant="secondary"
+                          type="button"
+                          className="h-8 w-8 rounded-full bg-red-600 hover:bg-red-700 border border-red-500/25 text-white p-0 shadow-lg flex items-center justify-center transition-transform active:scale-90 font-bold cursor-pointer"
+                          title="बंद करें (Close Scanner)"
+                        >
+                          ✕
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Laser scan line sweep */}
+                  {cameraReady && !cameraError && (
+                    <motion.div 
+                      animate={{ top: ['5%', '95%', '5%'] }}
+                      transition={{ duration: 2.8, repeat: Infinity, ease: 'easeInOut' }}
+                      className="absolute left-0 right-0 h-[3px] bg-gradient-to-r from-transparent via-[#06b6d4] to-transparent shadow-[0_0_20px_rgba(6,182,212,0.95)] z-30 pointer-events-none" 
+                    />
+                  )}
+
+                  {/* Aesthetic HUD brackets & overlays */}
+                  {cameraReady && !cameraError && (
+                    <>
+                      <div className="absolute top-5 left-5 w-8 h-8 border-t-4 border-l-4 border-emerald-400 rounded-tl-xl z-20 shadow-[0_0_15px_rgba(16,185,129,0.3)] pointer-events-none" />
+                      <div className="absolute top-5 right-5 w-8 h-8 border-t-4 border-r-4 border-emerald-400 rounded-tr-xl z-20 shadow-[0_0_15px_rgba(16,185,129,0.3)] pointer-events-none" />
+                      <div className="absolute bottom-5 left-5 w-8 h-8 border-b-4 border-l-4 border-emerald-400 rounded-bl-xl z-20 shadow-[0_0_15px_rgba(16,185,129,0.3)] pointer-events-none" />
+                      <div className="absolute bottom-5 right-5 w-8 h-8 border-b-4 border-r-4 border-emerald-400 rounded-br-xl z-20 shadow-[0_0_15px_rgba(16,185,129,0.3)] pointer-events-none" />
+
+                      {/* Oval Alignment Frame */}
+                      <div className="absolute inset-8 sm:inset-12 border-2 border-dashed border-[#06b6d4]/40 rounded-[100px_100px_80px_80px] pointer-events-none flex flex-col items-center justify-center z-10 bg-gradient-to-b from-[#06b6d4]/4 to-transparent">
+                        <div className="w-16 h-16 rounded-full border-2 border-dashed border-[#ffd700]/40 animate-pulse mt-4 flex items-center justify-center bg-[#ffd700]/5">
+                          <span className="w-2.5 h-2.5 rounded-full bg-[#ffd700]/60" />
+                        </div>
+                        <span className="text-[9px] font-black tracking-widest text-[#ffd700] bg-black/80 px-3.5 py-1.5 rounded-full border border-[#ffd700]/25 mt-auto mb-6 shadow-md uppercase">
+                          चेहरा बॉक्स के अंदर रखें (ALIGN FACE)
+                        </span>
+                      </div>
+                    </>
+                  )}
+
                   <Webcam
                     key={cameraRetryKey}
                     audio={false}
@@ -905,7 +1012,7 @@ export function TeacherRegistration() {
                       console.error("Webcam Error:", err);
                       setCameraError("Camera Access Denied or Busy");
                       setCameraReady(false);
-                      toast.error("Camera access denied! Try clicking 'Open in New Tab' to prompt and allow browser camera access.");
+                      toast.error("Camera access denied or busy! Try tapping 'Open in New Tab'.");
                     }}
                     onResize={() => {}}
                     imageSmoothing={true}
@@ -914,26 +1021,35 @@ export function TeacherRegistration() {
                     screenshotQuality={0.9}
                   />
 
-                  <Button 
-                    onClick={capture}
-                    className="absolute bottom-8 left-1/2 -translate-x-1/2 rounded-full h-16 w-16 p-0 bg-white hover:bg-slate-100 text-natural-primary shadow-2xl transition-transform active:scale-90"
-                  >
-                    <Camera size={32} />
-                  </Button>
+                  {/* Capturing Trigger button */}
+                  {cameraReady && !cameraError && (
+                    <div className="absolute bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-4 z-30 pointer-events-auto">
+                      <Button 
+                        onClick={capture}
+                        type="button"
+                        className="rounded-full h-16 w-16 p-0 bg-gradient-to-r from-emerald-400 to-cyan-400 hover:from-emerald-500 hover:to-cyan-500 text-black shadow-[0_0_30px_rgba(16,185,129,0.5)] border-4 border-white transition-all transform hover:scale-105 active:scale-95 flex items-center justify-center cursor-pointer"
+                        title="फोटो क्लिक करें (Capture Photo)"
+                      >
+                        <Camera size={28} className="text-black" />
+                      </Button>
+                    </div>
+                  )}
                 </div>
               ) : (activeTab === 'single' ? photo : bulkEntries[selectedBulkIndex!]?.photo) ? (
                 <div className="relative w-full h-full">
                   <img src={(activeTab === 'single' ? photo : bulkEntries[selectedBulkIndex!]?.photo) || ''} className="w-full h-full object-cover" alt="Registration Profile" />
-              <div className="absolute bottom-6 left-0 right-0 px-6 flex gap-2">
+                  <div className="absolute bottom-6 left-0 right-0 px-6 flex gap-3 z-20">
                     <Button 
                       variant="secondary"
-                      onClick={() => setIsCapturing(true)}
-                      className="flex-1 h-12 rounded-2xl gap-2 bg-white/90 text-natural-primary font-bold shadow-xl backdrop-blur-sm"
+                      type="button"
+                      onClick={handleStartCamera}
+                      className="flex-1 h-12 rounded-2xl gap-2 bg-white hover:bg-slate-50 text-natural-primary font-bold shadow-xl border-none cursor-pointer"
                     >
-                      <Camera size={18} /> Retake
+                      <Camera size={18} className="text-[#06b6d4]" /> Retake / पुनः स्कैन करें
                     </Button>
                     <Button 
                       variant="destructive"
+                      type="button"
                       onClick={() => {
                         if (activeTab === 'single') setPhoto(null);
                         else {
@@ -942,25 +1058,36 @@ export function TeacherRegistration() {
                           setBulkEntries(newEntries);
                         }
                       }}
-                      className="h-12 w-12 rounded-2xl bg-red-500 text-white shadow-xl hover:bg-red-600"
+                      className="h-12 w-12 rounded-2xl bg-red-500 text-white shadow-xl hover:bg-red-600 border-none cursor-pointer flex items-center justify-center"
                     >
                       <Trash2 size={18} />
                     </Button>
                   </div>
                 </div>
               ) : (
-                <div className="text-center p-8 space-y-6">
-                  <div className="w-20 h-20 bg-white/50 rounded-full flex items-center justify-center mx-auto shadow-sm">
-                    <Camera size={32} className="text-natural-primary/30" />
+                <div className="text-center p-8 space-y-6 flex flex-col items-center justify-center">
+                  <div className="relative group">
+                    <div className="absolute inset-0 bg-gradient-to-r from-emerald-500 via-cyan-400 to-amber-400 rounded-full blur-[8px] opacity-60 group-hover:opacity-90 transition-opacity animate-pulse" />
+                    <div className="w-20 h-20 bg-[#0d1527] border border-white/10 rounded-full flex items-center justify-center mx-auto shadow-xl relative z-10">
+                      <Camera size={32} className="text-cyan-400 animate-pulse" />
+                    </div>
                   </div>
-                  <div className="flex flex-col gap-3">
+                  
+                  <div className="space-y-1">
+                    <p className="text-sm font-black text-white/90">SELECT REGISTRAR PHOTO / फोटो उपलब्ध कराएं</p>
+                    <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest">Enroll teacher with a clear facial snapshot</p>
+                  </div>
+                  
+                  <div className="flex flex-col gap-3 w-full max-w-[280px]">
                     <Button 
-                      onClick={() => setIsCapturing(true)} 
-                      className="h-12 px-8 rounded-2xl bg-natural-primary text-white font-bold gap-2"
+                      onClick={handleStartCamera} 
+                      type="button"
+                      className="h-12 rounded-2xl bg-gradient-to-r from-emerald-400 to-cyan-400 hover:from-emerald-500 hover:to-cyan-500 text-black font-extrabold text-xs uppercase shadow-lg shadow-emerald-500/10 transition-all cursor-pointer border-none"
                     >
-                      <Camera size={18} /> Open Camera
+                      📷 वेबकैम ऑन करें (Open Camera)
                     </Button>
-                    <div className="relative">
+                    
+                    <div className="relative w-full">
                       <input 
                         type="file" 
                         id="photo-upload" 
@@ -985,10 +1112,11 @@ export function TeacherRegistration() {
                       />
                       <Button 
                         variant="outline"
+                        type="button"
                         onClick={() => document.getElementById('photo-upload')?.click()}
-                        className="h-12 px-8 rounded-2xl border-natural-primary/30 text-natural-primary font-bold gap-2 w-full"
+                        className="h-12 rounded-2xl border-white/15 bg-[#161e31] hover:bg-[#1f2a43] text-white/95 font-bold gap-2 w-full cursor-pointer"
                       >
-                        <Upload size={18} /> Upload Photo
+                        <Upload size={16} className="text-cyan-400" /> फोटो अपलोड करें (Upload Photo)
                       </Button>
                     </div>
                   </div>
@@ -1104,7 +1232,7 @@ export function TeacherRegistration() {
                           variant="ghost" 
                           size="icon" 
                           className="text-white hover:bg-white/20 rounded-full"
-                          onClick={() => setIsCapturingEdit(true)}
+                          onClick={handleStartCameraEdit}
                         >
                           <Camera size={24} />
                         </Button>
@@ -1154,7 +1282,7 @@ export function TeacherRegistration() {
                             variant="outline" 
                             size="sm" 
                             className="rounded-xl h-9" 
-                            onClick={() => setIsCapturingEdit(true)}
+                            onClick={handleStartCameraEdit}
                           >
                             <Camera size={14} className="mr-2" /> Retake
                           </Button>

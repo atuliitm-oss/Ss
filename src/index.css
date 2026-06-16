@@ -2,21 +2,21 @@
 @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,200..800;1,200..800&display=swap');
 
 :root {
-  --natural-bg: #f5f7ff;
-  --natural-primary: #6366f1;
-  --natural-accent: #f43f5e;
-  --natural-text: #1e1b4b;
+  --natural-bg: #080b11;
+  --natural-primary: #3b82f6;
+  --natural-accent: #facc15;
+  --natural-text: #f8fafc;
   --natural-success: #10b981;
-  --natural-card: #ffffff;
+  --natural-card: #131927;
 }
 
 .dark {
-  --natural-bg: #090a10;
-  --natural-primary: #818cf8;
-  --natural-accent: #f43f5e;
-  --natural-text: #f1f3f9;
+  --natural-bg: #06080d;
+  --natural-primary: #60a5fa;
+  --natural-accent: #fde047;
+  --natural-text: #f8fafc;
   --natural-success: #34d399;
-  --natural-card: #141824;
+  --natural-card: #0f1420;
 }
 
 @theme {

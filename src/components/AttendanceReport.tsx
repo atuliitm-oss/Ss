@@ -512,9 +512,16 @@ export function AttendanceReport() {
                     </div>
                     <div className="mt-4 text-center space-y-1">
                       <h4 className="font-bold text-natural-primary text-[11px] truncate w-[140px] uppercase tracking-wide">{log.teacherName}</h4>
-                      <p className="text-[9px] font-black text-indigo-500 uppercase tracking-tighter">
-                        {log.timestamp?.toDate ? format(log.timestamp.toDate(), 'HH:mm a') : 'Just now'}
-                      </p>
+                      <div className="flex flex-col gap-0.5 items-center justify-center">
+                        <p className="text-[9px] font-black text-indigo-500 uppercase tracking-tighter">
+                          आगमन / IN: {log.timestamp?.toDate ? format(log.timestamp.toDate(), 'hh:mm a') : 'Just now'}
+                        </p>
+                        {log.outTime && (
+                          <p className="text-[9px] font-black text-emerald-500 uppercase tracking-tighter bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100/30">
+                            प्रस्थान / OUT: {log.outTime?.toDate ? format(log.outTime.toDate(), 'hh:mm a') : log.outTimeStr || 'N/A'}
+                          </p>
+                        )}
+                      </div>
                     </div>
                   </div>
                 ))

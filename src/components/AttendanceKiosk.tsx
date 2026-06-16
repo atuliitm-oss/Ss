@@ -11,7 +11,7 @@ import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { db, handleFirestoreError, OperationType } from '@/src/lib/firebase';
-import { collection, query, where, getDocs, addDoc, serverTimestamp, doc, getDoc, onSnapshot } from 'firebase/firestore';
+import { collection, query, where, getDocs, addDoc, serverTimestamp, doc, getDoc, onSnapshot, updateDoc } from 'firebase/firestore';
 import { identifyTeacher } from '@/src/services/geminiService';
 import { compressImage } from '@/src/lib/imageUtils';
 import { toast } from 'sonner';
@@ -27,12 +27,16 @@ export function AttendanceKiosk() {
     matchThreshold: number, 
     livenessSensitivity: number, 
     compressionQuality: number,
-    voiceAnnouncementsEnabled?: boolean
+    voiceAnnouncementsEnabled?: boolean,
+    schoolStartTime?: string,
+    schoolEndTime?: string
   }>({ 
     matchThreshold: 0.8, 
     livenessSensitivity: 0.5, 
     compressionQuality: 0.7,
-    voiceAnnouncementsEnabled: true 
+    voiceAnnouncementsEnabled: true,
+    schoolStartTime: '08:00',
+    schoolEndTime: '14:00'
   });
   const [result, setResult] = useState<{ 
     isMatch: boolean; 
@@ -67,10 +71,121 @@ export function AttendanceKiosk() {
   const [pinInput, setPinInput] = useState('');
   const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
 
+  // Manual Staff ID attributes
+  const [showManualId, setShowManualId] = useState(false);
+  const [manualIdInput, setManualIdInput] = useState('');
+  const [verifyingManualId, setVerifyingManualId] = useState(false);
+
+  const handleManualIdCheckIn = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!manualIdInput.trim()) {
+      toast.error("Please enter a valid Staff ID");
+      return;
+    }
+
+    setVerifyingManualId(true);
+    try {
+      const matchTeacher = teachers.find(t => t.id && (t.id.toLowerCase() === manualIdInput.trim().toLowerCase()));
+      if (!matchTeacher) {
+        toast.error("No staff profile found with this ID");
+        setVerifyingManualId(false);
+        return;
+      }
+
+      // Record attendance in Firestore
+      const todayString = format(new Date(), 'yyyy-MM-dd');
+      const attendanceRef = collection(db, "attendance");
+      const q = query(
+        attendanceRef, 
+        where("teacherId", "==", matchTeacher.dbId || matchTeacher.id), 
+        where("date", "==", todayString)
+      );
+      const querySnapshot = await getDocs(q);
+      const alreadyMarked = !querySnapshot.empty;
+
+      const { currentTimeStr, isBeforeOrAtStart, isAfterEnd } = getSchoolTimeStatus();
+      let isCheckoutAction = false;
+
+      if (!alreadyMarked) {
+        await addDoc(attendanceRef, {
+          teacherId: matchTeacher.dbId || matchTeacher.id,
+          name: matchTeacher.name,
+          department: matchTeacher.department || "General",
+          timestamp: serverTimestamp(),
+          date: todayString,
+          method: "manual_id",
+          isLivePerson: true,
+          confidence: 1.0,
+          inTimeStr: currentTimeStr
+        });
+        toast.success(`Check-In Successful for ${matchTeacher.name}`);
+        speakTeacherAnnouncement(matchTeacher.name, false, isBeforeOrAtStart);
+      } else {
+        if (isAfterEnd) {
+          const docId = querySnapshot.docs[0].id;
+          await updateDoc(doc(db, "attendance", docId), {
+            outTime: serverTimestamp(),
+            outTimeStr: currentTimeStr,
+            isOutMarked: true
+          });
+          toast.success(`Check-Out Successful for ${matchTeacher.name}`);
+          speakTeacherAnnouncement(matchTeacher.name, true, false);
+          isCheckoutAction = true;
+        } else {
+          toast.info(`Attendance already marked today for ${matchTeacher.name}`);
+          speakTeacherAnnouncement(matchTeacher.name, false, isBeforeOrAtStart);
+        }
+      }
+
+      // Display response
+      setResult({
+        isMatch: true,
+        isLivePerson: true,
+        matchedId: matchTeacher.id,
+        confidence: 1.0,
+        name: matchTeacher.name,
+        reason: isCheckoutAction 
+          ? `Checked Out Successfully at ${currentTimeStr}.` 
+          : (alreadyMarked ? "Attendance already completed today." : "Manual Staff ID verified successfully."),
+        isAlreadyMarked: alreadyMarked && !isCheckoutAction
+      });
+      setCapturedPhoto(matchTeacher.photo || null);
+      setStep('result');
+      setShowManualId(false);
+      setManualIdInput('');
+    } catch (error) {
+      console.error("Error manual check-in:", error);
+      toast.error("Database connection error");
+    } finally {
+      setVerifyingManualId(false);
+    }
+  };
+
   const webcamRef = useRef<Webcam>(null);
   const resetTimerRef = useRef<NodeJS.Timeout | null>(null);
 
-  const speakTeacherName = (name: string, isAlreadyMarked: boolean) => {
+  const getSchoolTimeStatus = () => {
+    const startTime = aiSettings.schoolStartTime || '08:00';
+    const endTime = aiSettings.schoolEndTime || '14:00';
+    
+    const now = new Date();
+    const currentHour = now.getHours();
+    const currentMinute = now.getMinutes();
+    const currentTimeStr = `${String(currentHour).padStart(2, '0')}:${String(currentMinute).padStart(2, '0')}`;
+    
+    const isBeforeOrAtStart = currentTimeStr <= startTime;
+    const isAfterEnd = currentTimeStr >= endTime;
+    
+    return {
+      currentTimeStr,
+      isBeforeOrAtStart,
+      isAfterEnd,
+      startTime,
+      endTime
+    };
+  };
+
+  const speakTeacherAnnouncement = (name: string, isCheckout: boolean, isBeforeOrAtStart: boolean) => {
     if (aiSettings.voiceAnnouncementsEnabled === false) {
       return;
     }
@@ -79,16 +194,23 @@ export function AttendanceKiosk() {
         window.speechSynthesis.cancel();
         
         const cleanName = name.replace(/[^a-zA-Z0-9\s\u0900-\u097F]/g, '');
-        const messageText = isAlreadyMarked 
-          ? `Welcome back, ${cleanName}. Your attendance is already marked.` 
-          : `Thank you, ${cleanName}. Your attendance has been marked successfully.`;
+        let messageText = "";
+        
+        if (isCheckout) {
+          messageText = `धन्यवाद, आपका स्कूल से बाहर जाने का समय सफलतापूर्वक दर्ज कर लिया गया है।`;
+        } else if (isBeforeOrAtStart) {
+          messageText = `आपका स्वागत है, ${cleanName}`;
+        } else {
+          messageText = `आपका स्वागत है, ${cleanName}। आपकी उपस्थिति दर्ज कर ली गई है।`;
+        }
           
         const utterance = new SpeechSynthesisUtterance(messageText);
+        utterance.lang = 'hi-IN';
         
         const voices = window.speechSynthesis.getVoices();
         const preferredVoice = voices.find(v => 
-          v.lang.includes('en-IN') || 
           v.lang.includes('hi-IN') || 
+          v.lang.includes('en-IN') || 
           v.lang.includes('en-US')
         );
         
@@ -96,7 +218,7 @@ export function AttendanceKiosk() {
           utterance.voice = preferredVoice;
         }
         
-        utterance.rate = 0.9;
+        utterance.rate = 0.85;
         utterance.pitch = 1.0;
         
         window.speechSynthesis.speak(utterance);
@@ -148,7 +270,9 @@ export function AttendanceKiosk() {
           matchThreshold: data.matchThreshold ?? 0.8,
           livenessSensitivity: data.livenessSensitivity ?? 0.5,
           compressionQuality: data.compressionQuality ?? 0.7,
-          voiceAnnouncementsEnabled: data.voiceAnnouncementsEnabled ?? true
+          voiceAnnouncementsEnabled: data.voiceAnnouncementsEnabled ?? true,
+          schoolStartTime: data.schoolStartTime ?? '08:00',
+          schoolEndTime: data.schoolEndTime ?? '14:00'
         });
         if (data.adminPin) {
           setAdminPin(data.adminPin);
@@ -259,6 +383,7 @@ export function AttendanceKiosk() {
       if (matchResult.isMatch && matchResult.matchedId) {
         // Success!
         const teacher = teachers.find(t => t.id === matchResult.matchedId);
+        const teacherName = matchResult.name || teacher?.name || 'Unknown';
         
         const logQuality = Math.max(0.2, aiSettings.compressionQuality * 0.8);
         const compressedPhoto = await compressImage(imageSrc, 400, 400, logQuality);
@@ -271,35 +396,59 @@ export function AttendanceKiosk() {
         );
         
         const existingDocs = await getDocs(existingQuery);
+        const { currentTimeStr, isBeforeOrAtStart, isAfterEnd } = getSchoolTimeStatus();
+        let isCheckoutAction = false;
         
         if (!existingDocs.empty) {
-          setStep('result');
-          setResult({
-            ...matchResult,
-            isMatch: true,
-            isAlreadyMarked: true,
-            reason: "Attendance already on record for today."
-          });
-          toast.info("Already marked today");
-          speakTeacherName(matchResult.name || teacher?.name || 'Unknown', true);
-          return;
+          if (isAfterEnd) {
+            const docId = existingDocs.docs[0].id;
+            await updateDoc(doc(db, path, docId), {
+              outTime: serverTimestamp(),
+              outTimeStr: currentTimeStr,
+              isOutMarked: true
+            });
+            isCheckoutAction = true;
+
+            setStep('result');
+            setResult({
+              ...matchResult,
+              isMatch: true,
+              isAlreadyMarked: false,
+              reason: `CHECK-OUT SUCCESSFUL (प्रस्थान दर्ज) at ${currentTimeStr}.`
+            });
+            toast.success(`Check-Out Successful for ${teacherName}`);
+            speakTeacherAnnouncement(teacherName, true, false);
+            return;
+          } else {
+            setStep('result');
+            setResult({
+              ...matchResult,
+              isMatch: true,
+              isAlreadyMarked: true,
+              reason: "Attendance already on record for today."
+            });
+            toast.info("Already marked today");
+            speakTeacherAnnouncement(teacherName, false, isBeforeOrAtStart);
+            return;
+          }
         }
 
         await addDoc(collection(db, path), {
           teacherId: matchResult.matchedId,
-          teacherName: matchResult.name || teacher?.name || 'Unknown',
+          teacherName: teacherName,
           date: today,
           timestamp: serverTimestamp(),
           verificationPhoto: compressedPhoto,
           status: 'present',
           confidence: matchResult.confidence,
-          isLiveVerified: true
+          isLiveVerified: true,
+          inTimeStr: currentTimeStr
         });
 
         setResult(matchResult);
         setStep('result');
-        toast.success(`Welcome, ${matchResult.name}`);
-        speakTeacherName(matchResult.name || teacher?.name || 'Unknown', false);
+        toast.success(`Welcome, ${teacherName}`);
+        speakTeacherAnnouncement(teacherName, false, isBeforeOrAtStart);
       } else {
         setStep('result');
         setResult(matchResult);
@@ -496,9 +645,9 @@ export function AttendanceKiosk() {
   };
 
   return (
-    <div className="flex flex-col gap-4 md:gap-6 w-full max-w-lg mx-auto px-1">
-      {/* Kiosk Main Viewfinder */}
-      <div className="natural-card bg-[#e8e4db] p-1 md:p-2 border-4 md:border-[8px] border-white overflow-hidden relative flex flex-col items-center justify-center aspect-[4/5] md:aspect-[3/4] w-full shadow-2xl">
+    <div className="flex flex-col gap-4 md:gap-5 w-full max-w-xl mx-auto px-1">
+      {/* Kiosk Main Viewfinder Board styled in premium deep space navy, with glowing accent lighting */}
+      <div className="w-full bg-[#0d1527] rounded-[44px] border-2 border-white/[0.05] p-5 md:p-8 overflow-hidden relative flex flex-col items-center justify-center min-h-[480px] shadow-[0_25px_60px_-15px_rgba(0,0,0,0.7),_0_0_40px_rgba(16,185,129,0.08),_inset_0_0_25px_rgba(255,255,255,0.02)] transition-all duration-300">
         {step === 'capture' && (
           <motion.div 
             key="capture"
@@ -508,58 +657,90 @@ export function AttendanceKiosk() {
           >
             <div className="relative w-full h-full flex flex-col items-center justify-center overflow-hidden">
               {/* Laser scan line sweep */}
-              {cameraReady && !cameraError && (
+              {cameraReady && !cameraError && isCameraActive && (
                 <motion.div 
-                  animate={{ top: ['15%', '85%', '15%'] }}
-                  transition={{ duration: 4, repeat: Infinity, ease: "linear" }}
-                  className="absolute left-[10%] right-[10%] h-[2px] bg-natural-accent shadow-[0_0_15px_rgba(244,63,94,0.8)] z-20 opacity-60 pointer-events-none" 
+                  animate={{ top: ['5%', '95%', '5%'] }}
+                  transition={{ duration: 2.8, repeat: Infinity, ease: "easeInOut" }}
+                  className="absolute left-0 right-0 h-[3.5px] bg-gradient-to-r from-transparent via-[#06b6d4] to-transparent shadow-[0_0_22px_rgba(6,182,212,0.95),_0_0_10px_rgba(6,182,212,0.6)] z-30 pointer-events-none" 
                 />
               )}
 
-              {/* Main camera viewport */}
-              <div className="w-[90%] md:w-[85%] h-[80%] md:h-auto md:aspect-[3/4] border-4 border-white rounded-[40px] md:rounded-[120px_120px_100px_100px] relative overflow-hidden bg-black shadow-inner">
-                {!isCameraActive ? (
-                  <div className="absolute inset-0 flex flex-col items-center justify-center text-white px-3 text-center gap-5 bg-slate-900/95 z-30">
-                    <div className="p-4 bg-indigo-500/10 rounded-full animate-bounce">
-                      <Camera className="text-indigo-400 animate-pulse" size={44} />
-                    </div>
-                    <div className="space-y-1 px-4">
-                      <span className="text-xs md:text-sm font-black uppercase tracking-tight block text-indigo-300 font-sans">
-                        चेहरा स्कैन करने के लिए कैमरा खोलें
-                      </span>
-                    </div>
-
-                    <div className="flex flex-col gap-2.5 w-full max-w-[220px] px-2 shrink-0">
-                      <Button 
-                        size="lg" 
-                        onClick={() => {
-                          setIsCameraActive(true);
-                          setCameraReady(false);
-                          setCameraError(null);
-                        }}
-                        className="bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-700 hover:to-indigo-600 text-white rounded-2xl h-12 w-full text-[10px] uppercase font-black tracking-widest shadow-lg shadow-indigo-600/30 flex items-center justify-center gap-2 border border-indigo-400/20 active:scale-95 transition-all text-center animate-pulse shrink-0"
-                      >
-                        📷 कैमरा चालू करें (Open Camera)
-                      </Button>
-
-                      <div className="relative flex py-0.5 items-center shrink-0">
-                        <div className="flex-grow border-t border-white/10"></div>
-                        <span className="flex-shrink mx-3 text-[8px] font-black text-white/35 uppercase tracking-widest">या (OR)</span>
-                        <div className="flex-grow border-t border-white/10"></div>
-                      </div>
-
-                      <Button 
-                        onClick={handleUploadWithPinCheck}
-                        className="w-full h-11 rounded-2xl bg-white hover:bg-neutral-50 text-neutral-800 border-none flex items-center justify-center gap-2 font-black text-[10px] uppercase shadow-md active:scale-95 transition-all text-center select-none shrink-0"
-                      >
-                        <Upload size={14} className="text-indigo-600" /> 📸 फोटो अपलोड करें (Gallery)
-                      </Button>
+              {/* Main camera viewport or active camera screen */}
+              {!isCameraActive ? (
+                <div className="flex flex-col items-[#ffd700] items-center justify-center w-full py-10 md:py-16 select-none text-center">
+                  {/* Circular placeholder mimicking scanning reticle with vivid pulsing aura */}
+                  <div className="relative group mb-8">
+                    <div className="absolute inset-0 bg-gradient-to-r from-emerald-500 via-cyan-400 to-[#ffd700] rounded-full blur-[10px] opacity-75 group-hover:opacity-100 transition-opacity animate-pulse duration-2000" />
+                    <div className="w-26 h-26 md:w-30 md:h-30 rounded-full bg-[#0a0f1d] flex items-center justify-center border-2 border-white/[0.08] relative z-10 shadow-2xl transition-transform duration-300 group-hover:scale-105">
+                      <Camera className="text-[#ffd700] animate-[pulse_2s_infinite]" size={42} />
                     </div>
                   </div>
-                ) : (
+
+                  {/* High contrast dual language action headline */}
+                  <h3 className="text-xl md:text-2xl font-black text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 via-cyan-300 to-[#ffd700] tracking-wider text-center px-4 mb-2 leading-tight max-w-[380px] uppercase font-sans">
+                    SCAN FACE FOR CHECK-IN / चेहरा स्कैन करें
+                  </h3>
+                  <p className="text-[10.5px] font-bold text-white/35 tracking-widest uppercase mb-8">
+                    Smart Biometric Attendance Terminal
+                  </p>
+
+                  <div className="flex flex-col gap-3.5 w-full max-w-[320px] px-2">
+                    {/* Primary Scan Button */}
+                    <Button 
+                      size="lg"
+                      onClick={() => {
+                        setIsCameraActive(true);
+                        setCameraReady(false);
+                        setCameraError(null);
+                      }}
+                      className="w-full h-14 rounded-2xl bg-gradient-to-r from-emerald-500 to-cyan-500 hover:from-emerald-600 hover:to-cyan-600 text-black font-extrabold text-xs uppercase shadow-xl shadow-emerald-500/10 active:scale-95 transition-all text-center cursor-pointer border-none"
+                    >
+                      <Camera size={16} className="text-black" /> 📷 ओपन स्कैनर (Open Scanner)
+                    </Button>
+
+                    {/* Visual Divider block matching iOS layouts */}
+                    <div className="flex items-center gap-3.5 w-full my-1.5 px-6">
+                      <div className="h-[1px] bg-white/[0.08] flex-1" />
+                      <span className="text-[10px] font-black text-[#ffd700]/70 tracking-widest uppercase text-center shrink-0">या / OR</span>
+                      <div className="h-[1px] bg-white/[0.08] flex-1" />
+                    </div>
+
+                    {/* Native Upload Option */}
+                    <Button 
+                      onClick={handleUploadWithPinCheck}
+                      className="w-full h-13 rounded-2xl bg-[#161e31] hover:bg-[#1a253d] border border-white/[0.06] text-white flex items-center justify-center gap-2 font-bold text-xs uppercase shadow-lg active:scale-95 transition-all text-center cursor-pointer"
+                    >
+                      <Upload size={16} className="text-cyan-400" /> 📸 फोटो अपलोड करें (Upload Photo)
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <div className="w-full aspect-[3/4] rounded-[28px] overflow-hidden bg-black border-2 border-emerald-500/50 shadow-[0_0_35px_rgba(16,185,129,0.22)] relative ring-8 ring-emerald-500/5 transition-all duration-300">
                   <>
+                    {/* Futuristic Scanning HUD Widgets */}
+                    {cameraReady && !cameraError && (
+                      <>
+                        {/* Live AI Scanning HUD Badge */}
+                        <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-black/80 backdrop-blur-md px-4 py-2 rounded-full border border-emerald-500/40 flex items-center gap-2 z-30 shadow-lg pointer-events-none">
+                          <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-ping shrink-0" />
+                          <span className="text-[9px] font-black tracking-widest text-[#10b981] uppercase font-mono">
+                            AI FACIAL SCANNER: ACTIVE
+                          </span>
+                        </div>
+
+                        {/* Neon Scanner corner brackets with subtle scale pulse */}
+                        <div className="absolute top-5 left-5 w-8 h-8 border-t-4 border-l-4 border-emerald-400 rounded-tl-xl z-30 shadow-[0_0_15px_rgba(16,185,129,0.3)] pointer-events-none animate-pulse" />
+                        <div className="absolute top-5 right-5 w-8 h-8 border-t-4 border-r-4 border-emerald-400 rounded-tr-xl z-30 shadow-[0_0_15px_rgba(16,185,129,0.3)] pointer-events-none animate-pulse" />
+                        <div className="absolute bottom-5 left-5 w-8 h-8 border-b-4 border-l-4 border-emerald-400 rounded-bl-xl z-30 shadow-[0_0_15px_rgba(16,185,129,0.3)] pointer-events-none animate-pulse" />
+                        <div className="absolute bottom-5 right-5 w-8 h-8 border-b-4 border-r-4 border-emerald-400 rounded-br-xl z-30 shadow-[0_0_15px_rgba(16,185,129,0.3)] pointer-events-none animate-pulse" />
+
+                        {/* Dynamic Neon Grid radial background layer */}
+                        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,_transparent_60%,_rgba(16,185,129,0.05)_100%)] pointer-events-none z-10" />
+                      </>
+                    )}
+
                     {quotaPaused && (
-                      <div className="absolute inset-0 flex flex-col items-center justify-center text-white p-6 text-center gap-4 bg-amber-950/95 z-40 overflow-y-auto w-full h-full">
+                      <div className="absolute inset-0 flex flex-col items-center justify-center text-white p-6 text-center gap-4 bg-amber-955/95 z-40 overflow-y-auto w-full h-full">
                         <div className="p-3 bg-amber-500/20 rounded-full animate-pulse shrink-0">
                           <WifiOff className="text-amber-400" size={32} />
                         </div>
@@ -681,32 +862,35 @@ export function AttendanceKiosk() {
                       }}
                     />
 
-                    {/* Dynamic Face align contour overlay */}
+                    {/* Dynamic Face align contour overlay - Colorful and Intuitive */}
                     {cameraReady && !cameraError && (
-                      <div className="absolute inset-8 border border-white/20 rounded-[80px_80px_60px_60px] pointer-events-none flex flex-col items-center justify-center">
-                        <div className="w-16 h-16 rounded-full border border-white/10 mt-6" />
-                        <span className="text-[7px] text-white/35 uppercase font-black tracking-[0.2em] mt-auto mb-16">
-                          यहाँ चेहरा संरेखित करें
+                      <div className="absolute inset-10 border-2 border-dashed border-[#06b6d4]/40 rounded-[100px_100px_80px_80px] pointer-events-none flex flex-col items-center justify-center z-20 bg-gradient-to-b from-[#06b6d4]/5 to-transparent shadow-[inset_0_0_20px_rgba(6,182,212,0.1)]">
+                        {/* Upper oval reticle */}
+                        <div className="w-20 h-20 rounded-full border-2 border-dashed border-[#ffd700]/40 mt-8 flex items-center justify-center bg-[#ffd700]/5 animate-pulse">
+                          <span className="w-3 h-3 rounded-full bg-[#ffd700]/60" />
+                        </div>
+                        <span className="text-[9.5px] font-black tracking-widest text-[#ffd700] bg-black/75 backdrop-blur-md px-3.5 py-1.5 rounded-full border border-[#ffd700]/30 mt-auto mb-10 shadow-lg shadow-black/45 uppercase text-center max-w-[85%] leading-none">
+                          चेहरा अंदर रखें / ALIGN FACE HERE
                         </span>
                       </div>
                     )}
                   </>
-                )}
-              </div>
+                </div>
+              )}
 
               {/* Bottom Triggers & Upload Controls */}
               <div className="absolute bottom-3 left-0 right-0 px-4 md:px-6 flex flex-col items-center gap-2.5 z-20 w-full">
                 {isCameraActive && cameraReady && !cameraError && (
-                  <div className="flex gap-2 w-[90%] md:w-[85%] self-center justify-center">
+                  <div className="flex gap-2 w-full self-center justify-center">
                     <Button 
                       onClick={() => handleCapture(false)} 
                       disabled={verifying}
-                      className="flex-1 h-12 rounded-xl bg-gradient-to-r from-natural-accent to-orange-500 hover:from-natural-accent/90 hover:to-orange-600 text-white font-black text-xs uppercase shadow-md transition-all active:scale-[0.98] border border-white/20 disabled:opacity-50"
+                      className="flex-1 h-13 rounded-xl bg-gradient-to-r from-emerald-500 to-cyan-500 hover:from-emerald-600 hover:to-cyan-600 text-black font-extrabold text-xs uppercase shadow-lg active:scale-[0.98] border-none disabled:opacity-50"
                     >
                       {verifying ? (
-                        <><Loader2 size={16} className="mr-2 animate-spin" /> पहचान की जा रही है...</>
+                        <><Loader2 size={16} className="mr-2 animate-spin text-black" /> पहचान की जा रही है...</>
                       ) : (
-                        <><Camera size={16} className="mr-2 animate-bounce animate-duration-1000" /> 👉 चेहरा स्कैन करें (Scan Now)</>
+                        <><Camera size={16} className="mr-2 animate-bounce animate-duration-1000 text-black" /> 👉 चेहरा स्कैन करें (Scan Now)</>
                       )}
                     </Button>
                     <Button 
@@ -716,7 +900,7 @@ export function AttendanceKiosk() {
                         setCameraError(null);
                       }}
                       variant="outline"
-                      className="h-12 w-12 rounded-xl flex items-center justify-center bg-white hover:bg-neutral-50 text-neutral-600 border border-neutral-200 p-0 shadow-md font-bold shrink-0"
+                      className="h-13 w-13 rounded-xl flex items-center justify-center bg-[#1a2336] hover:bg-[#232e47] text-white border border-white/[0.08] p-0 shadow-lg font-bold shrink-0 cursor-pointer"
                       title="कैमरा बंद करें (Close Camera)"
                     >
                       ✕
@@ -844,6 +1028,37 @@ export function AttendanceKiosk() {
         )}
       </div>
 
+      {/* 2-Column Action Grid under Kiosk Board (matching the screenshot) */}
+      <div className="grid grid-cols-2 gap-3.5 w-full mt-1.5">
+        <button 
+          onClick={toggleCamera}
+          className="bg-[#131927] border border-white/[0.04] p-4 rounded-2xl flex flex-col items-center justify-center text-center gap-1.5 hover:bg-white/[0.02] active:scale-95 transition-all cursor-pointer shadow-md select-none group"
+        >
+          <div className="w-10 h-10 bg-[#1b2336] rounded-full flex items-center justify-center text-sky-450 group-hover:scale-105 transition-transform border border-white/[0.04]">
+            <SwitchCamera size={18} className="text-sky-400" />
+          </div>
+          <span className="text-[10px] text-white/50 group-hover:text-white/75 font-black uppercase tracking-wider">Mirror Camera</span>
+        </button>
+
+        <button 
+          onClick={() => setShowManualId(true)}
+          className="bg-[#131927] border border-white/[0.04] p-4 rounded-2xl flex flex-col items-center justify-center text-center gap-1.5 hover:bg-white/[0.02] active:scale-95 transition-all cursor-pointer shadow-md select-none group"
+        >
+          <div className="w-10 h-10 bg-[#1b2336] rounded-full flex items-center justify-center text-[#ffd700] group-hover:scale-105 transition-transform border border-white/[0.04]">
+            <KeyRound size={18} className="text-[#ffd700]" />
+          </div>
+          <span className="text-[10px] text-white/50 group-hover:text-white/75 font-black uppercase tracking-wider">Manual Staff ID</span>
+        </button>
+      </div>
+
+      {/* Modern Kiosk Footer status markers */}
+      <div className="flex justify-between items-center px-1.5 w-full mt-1 text-white/30 text-[9.5px] uppercase font-bold tracking-wider">
+        <span>Version 3.4.2-STABLE</span>
+        <span className="text-emerald-500 flex items-center gap-1.5">
+          <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" /> Network Optimal
+        </span>
+      </div>
+
       {/* Status Card */}
       <div className="natural-card bg-natural-card p-4 md:p-6 flex flex-col items-center text-center shadow-sm">
         {result?.isMatch ? (
@@ -969,6 +1184,71 @@ export function AttendanceKiosk() {
           </motion.div>
         )}
 
+        {/* Manual ID Check-In Dialog Popup */}
+        {showManualId && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/75 backdrop-blur-md z-[120] flex items-center justify-center p-4"
+          >
+            <motion.div 
+              initial={{ scale: 0.95, y: 15 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.95, y: 15 }}
+              className="bg-[#131927] border border-white/[0.08] rounded-[28px] w-full max-w-sm overflow-hidden shadow-2xl p-6 md:p-8"
+            >
+              <form onSubmit={(e) => { e.preventDefault(); handleManualIdCheckIn(); }} className="flex flex-col items-center text-center gap-6">
+                <div className="w-16 h-16 bg-[#ffd700]/10 border border-[#ffd700]/25 rounded-full flex items-center justify-center text-[#ffd700]">
+                  <KeyRound size={28} />
+                </div>
+                <div className="space-y-1">
+                  <h2 className="text-lg font-black text-white italic tracking-tight uppercase">MANUAL CHECK-IN</h2>
+                  <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest leading-relaxed">
+                    ENTER STAFF ID OR EMPLOYEE NUMBER
+                  </p>
+                </div>
+                
+                <div className="w-full space-y-4">
+                  <div className="relative">
+                    <UserCheck className="absolute left-4 top-1/2 -translate-y-1/2 text-white/30" size={18} />
+                    <Input 
+                      type="text" 
+                      value={manualIdInput}
+                      onChange={(e) => setManualIdInput(e.target.value)}
+                      placeholder="e.g. EMP-001" 
+                      className="h-12 pl-12 rounded-2xl bg-black/40 border border-white/[0.08] focus:border-[#ffd700]/40 text-white transition-all font-bold tracking-wider text-center text-sm"
+                      autoFocus
+                      required
+                    />
+                  </div>
+                  
+                  <div className="flex gap-3 pt-2">
+                    <Button 
+                      type="button"
+                      variant="outline" 
+                      className="flex-1 h-11 rounded-xl font-bold bg-transparent text-white/60 hover:text-white border-white/[0.08]"
+                      onClick={() => {
+                        setShowManualId(false);
+                        setManualIdInput('');
+                      }}
+                      disabled={verifyingManualId}
+                    >
+                      Cancel
+                    </Button>
+                    <Button 
+                      type="submit"
+                      className="flex-1 h-11 rounded-xl font-black bg-[#ffd700] hover:bg-[#ffe047] text-black border-none"
+                      disabled={verifyingManualId}
+                    >
+                      {verifyingManualId ? 'Verifying...' : 'Check-In'}
+                    </Button>
+                  </div>
+                </div>
+              </form>
+            </motion.div>
+          </motion.div>
+        )}
 
       </AnimatePresence>
     </div>
